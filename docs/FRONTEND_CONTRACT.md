@@ -17,11 +17,15 @@ severity, a colour, and at least one instruction in both languages.
 | --- | --- | --- |
 | `GET` | `/v1/health` | Online/offline state, engine in use, queue counts |
 | `POST` | `/v1/alerts` | Submit one raw alert, get classification + safety + messages |
-| `GET` | `/v1/alerts/samples` | The 10 demo alerts, each with an `expected` block |
+| `GET` | `/v1/alerts/active` | Processed alerts to display, newest first (NOAA ones only while NWS still lists them) |
 | `GET` | `/v1/hazards` | Hazard legend, severity levels + colours, languages |
 | `GET` | `/v1/jobs/{id}` | Fetch a job later (same shape as the POST response) |
 | `GET` | `/v1/queue/summary` | Durable counts, including `pending_sync` |
-| `POST` | `/v1/demo/offline` | `{"enabled": true}` forces offline for the demo |
+| `GET` | `/v1/jobs?limit=10` | Most recent jobs |
+| `GET` | `/v1/noaa` | NOAA point (`null` until a location is set), `last_poll_at`, `last_error`, `interval_seconds`, `observation` |
+| `POST` | `/v1/noaa/location` | `{latitude, longitude, label?}` sets the NOAA point |
+| `POST` | `/v1/noaa/poll` | Poll NOAA now → `{status: ok|skipped|error, …}` |
+| `POST` | `/v1/demo/offline` | `{"enabled": true}` forces offline (endpoint name kept for compatibility) |
 | `POST` | `/v1/sync/run` | Trigger a reconciliation pass by hand |
 | `GET` | `/healthz` | Liveness only |
 
@@ -65,18 +69,18 @@ Any of these shapes works; unknown fields are ignored.
 
 ```json
 {
-  "identifier": "SB-DEMO-001",
-  "senderName": "National Weather Service",
-  "sent": "2026-11-07T18:42:00-06:00",
-  "event": "Tornado Warning",
-  "severity": "Extreme",
-  "urgency": "Immediate",
-  "certainty": "Observed",
+  "identifier": "urn:oid:… (the NWS alert id)",
+  "senderName": "…",
+  "sent": "…",
+  "event": "…",
+  "severity": "Unknown | Minor | Moderate | Severe | Extreme",
+  "urgency": "…",
+  "certainty": "…",
   "onset": "…", "expires": "…",
-  "areaDesc": "Cedar Rapids, Linn County, Iowa",
-  "headline": "Tornado Emergency for Cedar Rapids",
-  "description": "A large and destructive tornado is confirmed on the ground…",
-  "instruction": "Take shelter now in a basement or interior room. Do not wait.",
+  "areaDesc": "…",
+  "headline": "…",
+  "description": "…",
+  "instruction": "…",
   "language": "en"
 }
 ```
@@ -177,7 +181,7 @@ a string, a list of strings, or `[{ "areaDesc": "…" }]`. `severity` accepts
    badge when `official_reliable[lng]` is false ("automatic translation, 82%
    coverage"). That honesty is a judging point, not a defect to hide.
 4. **Escalation** — when `classification.escalated` or `conflicts` is non-empty,
-   show the conflict line. It is the clearest demo of "we refuse to downgrade".
+   show the conflict line. It is the clearest proof of "we refuse to downgrade".
 5. **Mode banner** — `GET /v1/health` → `mode` is `"online"` or `"offline"`.
    Also show `engine` from the job (`local` vs `swarm`) next to each alert; the
    two can differ per alert when the link drops mid-run.
@@ -227,15 +231,19 @@ async function legend() {
 
 ---
 
-## 5. Demo loop for the dashboard
+## 5. Live loop for the dashboard
 
-1. `GET /v1/alerts/samples`, render a picker (name + label).
-2. `POST /v1/alerts` with the chosen `alert`.
-3. Show: severity pill, hazard icon, confidence, the three action groups,
-   `first_action` in the selected language, the SMS preview with segment count,
-   and the `trace` chain (weather → safety → communication).
-4. Toggle `POST /v1/demo/offline {"enabled": true}`, re-run the same alert, and
-   point at `engine: "local"` plus the offline banner. Unplug Wi-Fi for the same
-   effect without touching the API.
-5. Compare the sample's `expected` block with the rendered values — that is the
-   self-check the Integration engineer can read off the screen.
+1. Statuses, each from its own field: **Internet** = the
+   `connectivity.probes` entry for api.weather.gov in `GET /v1/health`;
+   **Swarms** = `swarm.last_call` (`ok`, `ms`, `at`, `error`); **NOAA** =
+   `GET /v1/noaa` `last_poll_at` / `last_error`.
+2. If `GET /v1/noaa` → `point` is `null`, show "Set location" and no weather.
+   Location comes from browser GPS, "Find live alert", or `NOAA_LAT`/`NOAA_LON`.
+3. "Find live alert": read `https://api.weather.gov/alerts/active?status=actual`,
+   pick one active alert, `POST /v1/noaa/location` with a point inside its area,
+   then `POST /v1/noaa/poll`. Show the NWS alert id and link to
+   `https://api.weather.gov/alerts/{id}`.
+4. Render `GET /v1/alerts/active`: severity pill, the three action groups,
+   `first_action`, and who wrote it (`result.pipeline_engine` plus each
+   `trace[].engine`).
+5. Any value missing from a response is shown as "—", never a default.

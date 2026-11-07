@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.knowledge.samples import SAMPLES
+from tests.fixtures.samples import SAMPLES
 from app.main import create_app
 
 
@@ -56,12 +56,8 @@ def test_empty_alert_is_rejected(client) -> None:
     assert response.status_code == 422
 
 
-def test_samples_endpoint_publishes_inputs_with_expectations(client) -> None:
-    body = client.get("/v1/alerts/samples").json()
-    assert body["count"] == len(SAMPLES) == 10
-    for entry in body["samples"]:
-        assert body["samples"][0]["expected"]
-        assert {"name", "label", "expected", "alert"} <= set(entry)
+def test_canned_samples_are_not_served(client) -> None:
+    assert client.get("/v1/alerts/samples").status_code == 404
 
 
 def test_hazard_legend_covers_both_languages_and_severity_levels(client) -> None:
@@ -95,3 +91,23 @@ def test_spanish_only_request_still_returns_english_for_the_operator(client) -> 
     result = response.json()["result"]
     assert result["languages"] == ["es"]
     assert result["communication"]["sms"]["es"]["text"]
+
+
+def test_active_alerts_lists_processed_alerts_and_drops_expired(client) -> None:
+    live = submit(client, {"event": "Flash Flood Warning", "areaDesc": "Travis County",
+                           "expires": "2099-01-01T00:00:00Z"})
+    expired = submit(client, {"event": "Heat Advisory", "areaDesc": "Maricopa County",
+                              "expires": "2000-01-01T00:00:00Z"})
+
+    body = client.get("/v1/alerts/active").json()
+    ids = [alert["id"] for alert in body["alerts"]]
+    assert live["id"] in ids
+    assert expired["id"] not in ids
+    assert body["alerts"][0]["result"]["classification"]["hazard"]
+
+
+def test_dashboard_is_served_by_the_backend(client) -> None:
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "ResQ" in page.text
+    assert client.get("/v1").json()["health"] == "/v1/health"

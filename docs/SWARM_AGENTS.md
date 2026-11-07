@@ -113,23 +113,28 @@ so the offline story stays true. If you want Swarm in the loop for them, the
 supported path is:
 
 1. Build the agents in Swarm so they return the JSON in §3.
-2. Run them **offline-of-record**: call Swarm for the same 10 samples in
-   `/v1/alerts/samples`, store the responses, and compare them to each sample's
-   `expected` block plus the local `classification`/`safety`.
+2. Run them **offline-of-record**: call Swarm for currently active NWS alerts
+   (`https://api.weather.gov/alerts/active?status=actual`) and for the test
+   fixtures in `tests/fixtures/samples.py`, store the responses, and compare
+   them to the local `classification`/`safety` (and each fixture's `expected`).
 3. Where they disagree, the local answer wins unless the model found evidence
    the rules missed — that is a rule change in `app/knowledge/hazards.py`, not a
    new code path.
 
-This keeps one source of truth for safety text and still lets the demo say
+This keeps one source of truth for safety text and still supports the claim
 "three agents, chained, with a deterministic fallback".
 
 ## 5. Contract test you can run against your agents
 
+Pull real active alerts and run each through the backend:
+
 ```bash
-curl -s localhost:8000/v1/alerts/samples | jq -r '.samples[] | [.name, (.expected|tostring)] | @tsv'
+curl -s -H 'User-Agent: ResQ-weather-safety/0.1' \
+  'https://api.weather.gov/alerts/active?status=actual&message_type=alert' \
+  | jq -c '.features[:5][] | .properties | {identifier: .id, event, severity, urgency, certainty, areaDesc, headline, description, instruction}'
 ```
 
-Then, for each sample, post the same `alert` to your Swarm agent and diff:
+Then post each of those alerts to `POST /v1/alerts` and to your Swarm agent, and diff:
 
 | Field | Must match exactly | Allowed to differ |
 | --- | --- | --- |
@@ -141,9 +146,10 @@ Then, for each sample, post the same `alert` to your Swarm agent and diff:
 | wording of instructions | — | yes, as long as no new action appears |
 | SMS length | under 160 chars | — |
 
-Two samples are intentionally mislabelled by the feed (`heat_understated`,
-`thunderstorm_minor`). A correct agent must raise both and explain why; an agent
-that agrees with the feed is wrong.
+The test fixtures include two entries intentionally mislabelled by the feed
+(`heat_understated`, `thunderstorm_minor` in `tests/fixtures/samples.py`). A
+correct agent must raise both and explain why; an agent that agrees with the feed
+is wrong.
 
 ## 6. Failure modes already handled on our side
 

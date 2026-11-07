@@ -11,10 +11,13 @@ not touch the filesystem.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .api.routes import router as api_router
 from .config import Settings
@@ -24,6 +27,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "Front End"
 
 DESCRIPTION = """
 Offline-first backend for the SharkByte hackathon app.
@@ -63,7 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(api_router)
 
-    @app.get("/", tags=["meta"])
+    @app.get("/v1", tags=["meta"])
     async def index() -> dict:
         return {
             "service": settings.app_name,
@@ -79,8 +84,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "GET /v1/capabilities",
                 "POST /v1/demo/offline",
                 "POST /v1/sync/run",
+                "GET /v1/alerts/active",
             ],
         }
+
+    # The dashboard is served by the backend itself, so the phone loads the page
+    # and the API from one address and nothing depends on a second server.
+    frontend = Path(os.getenv("FRONTEND_DIR", FRONTEND_DIR))
+    if frontend.is_dir():
+        app.mount("/", StaticFiles(directory=frontend, html=True), name="dashboard")
 
     return app
 

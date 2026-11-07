@@ -6,7 +6,7 @@ Copy **index.html** and **alerts.json** into the existing `~/resq` folder on the
 
 From the folder containing `index.html` and `alerts.json`, run `python -m http.server 8080 --bind 127.0.0.1` and open [http://localhost:8080](http://localhost:8080). Use `python3` if that is the command installed on your computer.
 
-- `index.html` contains the markup, styles, and browser logic. The script handles location selection, Open-Meteo requests, browser storage, demo mode, and rendering local notices.
+- `index.html` contains the markup, styles, and browser logic. Everything it shows comes from the ResQ backend (`/v1/health`, `/v1/noaa`, `/v1/alerts/active`, `/v1/queue/summary`, `/v1/jobs`), plus api.weather.gov for **Find live alert** and the local `alerts.json` notices. When the page is served on :8080 it calls the backend on :8000 of the same host.
 - `alerts.json` is the static local notice feed. See the notice format below before replacing it with an app integration.
 - When changing the app, test both localhost and the Arduino's HTTP hotspot address. Localhost can support geolocation with permission even when GPS is blocked on the hotspot address. Cached readings and saved locations are separate for each address.
 
@@ -36,12 +36,11 @@ From the folder containing `index.html` and `alerts.json`, run `python -m http.s
 
 ## Try the dashboard
 
-- **Time.** The banner uses the phone or computer’s own clock and time zone. It works without internet. Changing the weather location leaves that clock tied to the browsing device.
-- **Location.** Start with the South Florida preset (Miami area) or enter decimal latitude and longitude for your area. The preset is opt-in. “Use my location” requests browser permission only when the page runs in a supported secure context. The Arduino’s plain HTTP LAN address generally blocks GPS. The localhost exception only applies on the same device as the browser. Permission denial, blocked access and timeouts leave the preset and manual entry available.
-- **Current weather.** Choose a location and tap **Fetch weather**. The browser sends the selected coordinates to Open-Meteo. The phone needs an internet route while it can still load the hotspot page. Cellular data may provide that route on some phones. Open-Meteo reports model-based conditions for the selected location. The free endpoint is intended for non-commercial use. See [Open-Meteo API documentation](https://open-meteo.com/en/docs) and [terms](https://open-meteo.com/en/terms).
-- **Offline test.** After one successful fetch, keep the phone connected to the hotspot, disable its internet route and reload the same address. The dashboard should show **Cached · Last saved weather**, or **Stale** when either the data time or retrieval time reaches one hour. It also shows both timestamps. Fetching again should retain the reading if the request fails. With no prior successful fetch, expect **Weather unavailable**. The cache belongs to this browser and this exact address and port. Private browsing, clearing site data or changing addresses can remove access to it. Selecting different coordinates clears the previous location’s reading.
-- **Demo.** Tap **Show demo** to see clearly labeled fictional weather without internet. Exit demo to return to real, saved or unavailable weather. Sample values are never saved as weather.
-- **Reset.** **Clear saved data** removes the selected location and weather snapshot from this browser.
+- **Statuses.** The top bar shows three separate statuses from the backend: **Internet** (the board can reach api.weather.gov), **Swarms** (last Swarms call ok/failed and its time in ms) and **NOAA** (last poll ok/failed, countdown to the next one).
+- **Location.** There is no default location. Until one is set, the NOAA panel shows **Set location** and no weather. Set it with **Use my location** (browser GPS, only in a secure context such as localhost; the Arduino's plain HTTP address generally blocks it), by entering coordinates, by tapping **Find live alert**, or with `NOAA_LAT`/`NOAA_LON` on the backend.
+- **Find live alert.** Fetches active alerts from api.weather.gov in the browser (the viewing device needs internet), picks one, moves the backend's NOAA point inside its area and polls. The card shows the NWS alert ID and links to it on api.weather.gov.
+- **Who wrote it.** Each card says whether Swarms AI or local rules wrote it, per pipeline stage.
+- **Offline.** The last backend answers are saved in this browser and shown, with their time, when the backend cannot be reached. Missing values are shown as "—".
 
 ## Post a local emergency notice
 

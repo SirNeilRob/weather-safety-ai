@@ -8,17 +8,17 @@ built; the other three columns are what the rest of the team builds against it.
 | # | Role | Owns | Done when |
 |---|---|---|---|
 | 1 | **AI / Swarm engineer** | Swarm project, Weather/Safety/Communication agent prompts, model choice, keys | one real Swarm call returns JSON that passes `docs/SWARM_AGENTS.md` §2 and the backend accepts it |
-| 2 | **Backend / offline (this repo)** | `app/`, queue, router, sync, alert pipeline, tests | `pytest` green, `offline_drill.py` 21/21, queue survives a restart |
+| 2 | **Backend / offline (this repo)** | `app/`, queue, router, sync, alert pipeline, tests | `pytest` green, `offline_drill.py` all checks pass, queue survives a restart |
 | 3 | **Frontend** | dashboard: alert list, severity, safety steps, EN/ES switch, online/offline badge | renders `POST /v1/alerts` output per `docs/FRONTEND_CONTRACT.md`, no dead spinner offline |
-| 4 | **Integration / testing** | sample scenarios, Wi-Fi-off rehearsal, demo run-through | drill passes twice in a row on the demo laptop with Wi-Fi actually off |
+| 4 | **Integration / testing** | live-alert scenarios, Wi-Fi-off rehearsal, presentation run-through | drill passes twice in a row on the presentation laptop with Wi-Fi actually off |
 
-Status right now: **#2 done** (91 tests, 21/21 drill). #1 and #3 have a written
-contract and a fake Swarm to build against; #4 has `scripts/offline_drill.py`
-and 10 fixtures to drive.
+Status right now: **#2 done**. #1 and #3 have a written contract and the live
+Swarms API to build against; #4 has `scripts/offline_drill.py`, which drives a
+live NWS alert through the pipeline.
 
 ## 2. Frozen contract
 
-**Ports:** backend `8000`, stand-in Swarm `8899`.
+**Ports:** backend `8000`. Swarm is the hosted API at `https://api.swarms.world`.
 **Base URL for the frontend:** `http://localhost:8000`.
 
 The frontend consumes only these:
@@ -26,7 +26,8 @@ The frontend consumes only these:
 ```
 POST /v1/alerts         -> { id, status, engine, sync_state, result }
 GET  /v1/jobs/{id}      -> same shape
-GET  /v1/alerts/samples -> { count, samples: [{ name, label, expected, alert }] }
+GET  /v1/alerts/active  -> { count, alerts: [job, …] }
+GET  /v1/noaa           -> NOAA point, last poll, observation
 GET  /v1/hazards        -> legend: severity_levels, hazards, products, languages
 GET  /v1/health         -> { mode, connectivity, queue, swarm }
 ```
@@ -48,7 +49,7 @@ nothing in those shapes without telling the other side.
 ## 3. Boundaries that will bite if crossed
 
 * The backend is assumed to run **on the same device** as the app. On a shared
-  server the "offline" path sits on the far side of the network and the demo
+  server the "offline" path sits on the far side of the network and the offline
   story collapses. Decide this before the UI hardcodes a URL.
 * The Safety agent is deliberately **not** delegable to Swarm. If the model owns
   the life-safety text, the offline claim is false and the fallback text is
@@ -59,12 +60,12 @@ nothing in those shapes without telling the other side.
   the `_valid()` check in `app/agents/cloud.py` only; the rest of the system
   depends on the normalised channel shape.
 
-## 4. Demo plan (who speaks)
+## 4. Presentation plan (who speaks)
 
 | Minute | On screen | Who |
 |---|---|---|
 | 0:00–0:30 | problem: warnings die with the network | #4 or #5 |
-| 0:30–1:15 | submit a tornado alert online, show trace + EN/ES SMS | #3 drives, #2 narrates |
+| 0:30–1:15 | Find live alert (real NWS alert), show trace + EN/ES SMS | #3 drives, #2 narrates |
 | 1:15–1:50 | pull Wi-Fi, re-submit, identical classification, `pipeline_engine: local` | #4 pulls the plug |
 | 1:50–2:20 | queue + sync catches up when back online | #2 |
 | 2:20–2:45 | Swarm agent chain (model drafts copy, safety stays local) | #1 |

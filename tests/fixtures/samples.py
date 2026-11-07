@@ -1,11 +1,10 @@
-"""Sample alerts for the demo, the integration tests, and the frontend team.
+"""Hand-written CAP alerts used only by the test suite.
 
-Each entry carries the **expected** classification next to the input. That is
-deliberate: the Integration/Testing role can assert on values instead of
-eyeballing a screen, and a regression breaks a test rather than a demo.
+Never imported by app/ and never served to the dashboard. Each entry carries the
+expected classification next to the input so a regression breaks a test.
 
-Two samples are intentionally mislabelled by the feed (heat and thunderstorm)
-so the safety-first escalation rule is visible in the output.
+Two entries are intentionally mislabelled by the feed (heat and thunderstorm)
+to exercise the safety-first escalation rule.
 """
 
 from __future__ import annotations

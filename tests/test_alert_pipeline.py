@@ -8,7 +8,7 @@ from app.agents.cloud import CloudDrafter
 from app.agents.communication import sms_meta
 from app.agents.pipeline import AlertPipeline
 from app.domain.alert import normalize
-from app.knowledge.samples import SAMPLES
+from tests.fixtures.samples import SAMPLES
 
 
 def sample(name: str) -> dict:

@@ -10,10 +10,10 @@ A backend that keeps issuing weather warnings when the internet does not.
 
 The safety advice is **never** produced by a language model, online or offline:
 the deterministic Safety agent owns it in both modes. That is the design
-decision the whole demo rests on.
+decision the whole system rests on.
 
-Status: **runs, tested, demo-verified** — 91 tests pass and the live
-online→offline→sync drill passes 21/21 checks against the stand-in Swarm.
+Status: **runs and is tested** — the test suite passes and the online→offline
+drill (`scripts/offline_drill.py`) runs a live NWS alert against the real Swarms API.
 
 Companion docs:
 
@@ -37,23 +37,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Open <http://127.0.0.1:8000/docs> for interactive API docs.
 
-No Swarm key yet? Run the stand-in API in a second terminal:
-
-```bash
-uvicorn scripts.fake_swarm:app --port 8899
-```
-
-and set in `.env`:
-
-```
-SWARM_BASE_URL=http://127.0.0.1:8899
-SWARM_SYNC_ENDPOINT=/v1/sync/ingest
-PROBE_URLS=http://127.0.0.1:8899/v1/health
-```
-
-That gives you the **online path and the sync path** without internet or
-credits. Everything below also works with `SWARM_BASE_URL` empty — that is just
-"always offline", which is the state we demo in.
+`.env` (gitignored) holds `SWARMS_API_KEY` and points the backend at the real
+Swarms API (`https://api.swarms.world`, `POST /v1/agent/completions`). With no
+key the backend simply runs fully offline.
 
 ---
 
@@ -102,36 +88,15 @@ raw CAP alert
   `communication.translation` — it reports which phrases it knew rather than
   pretending the output is fully translated.
 
-Sample output for a tornado warning while offline:
-
-```json
-{
-  "engine": "local",
-  "classification": { "hazard": "tornado", "severity": "extreme", "escalated": true },
-  "trace": [
-    {"agent": "weather", "engine": "local"},
-    {"agent": "safety", "engine": "local"},
-    {"agent": "communication", "engine": "local"}
-  ],
-  "communication": {
-    "sms": {
-      "en": {"text": "Tornado Warning. EXTREME. Cedar Rapids, …", "chars": 145, "segments": 1},
-      "es": {"segments": 3}
-    }
-  }
-}
-```
-
 `engine` is `local`, `swarm` or `mixed` — derived from what actually served the
 stages, not from whether the device happened to be online.
 
-### Demo fixtures
+### Live data only
 
-`GET /v1/alerts/samples` returns 10 CAP-shaped alerts, each with an `expected`
-block (hazard, severity, whether escalation is required). Two of them are
-deliberately mislabelled by the feed (`heat_understated`,
-`thunderstorm_minor`) so the escalation rule is visible in the demo instead of
-being a claim in a slide.
+Alerts come from the NOAA/NWS feed (`/v1/noaa`, polled for the configured
+location) or from `POST /v1/alerts`. Nothing canned is served. The hand-written
+CAP alerts used to test classification live in `tests/fixtures/samples.py` and
+are never imported by `app/`.
 
 ---
 
@@ -140,7 +105,6 @@ being a claim in a slide.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/alerts` | submit a weather alert → job id, or finished result with `wait_seconds` |
-| `GET` | `/v1/alerts/samples` | 10 demo alerts + expected classification |
 | `GET` | `/v1/hazards` | severity levels, hazard legend, products, channels, languages |
 | `GET` | `/v1/health` | link state, queue depth, sync backlog |
 | `POST` | `/v1/jobs` | generic job submit (kept for the non-alert kinds) |
@@ -148,7 +112,11 @@ being a claim in a slide.
 | `GET` | `/v1/jobs` | recent jobs (`?limit=`, `?status=`) |
 | `GET` | `/v1/queue/summary` | queue + sync counters for the status badge |
 | `GET` | `/v1/capabilities` | what the UI may show as available |
-| `POST` | `/v1/demo/offline` | force offline on/off (stage switch) |
+| `GET` | `/v1/alerts/active` | processed alerts to display (NOAA ones only while NWS still lists them) |
+| `GET` | `/v1/noaa` | NOAA location, last poll, active count, latest observation |
+| `POST` | `/v1/noaa/location` | set the NOAA point (`latitude`, `longitude`, `label`) |
+| `POST` | `/v1/noaa/poll` | poll NOAA now |
+| `POST` | `/v1/demo/offline` | force offline on/off (endpoint name kept for compatibility) |
 | `POST` | `/v1/sync/run` | force one reconciliation pass |
 
 Submit an alert:
@@ -190,7 +158,7 @@ Every job goes through the same decision order (`app/core/router.py`):
 | 3 | `SWARM_BASE_URL` not configured | local engine |
 | 4 | otherwise | try Swarm → on any failure, fall back to local |
 
-Two details that matter in a live demo:
+Two details that matter in practice:
 
 * **The request never waits on a network probe.** Connectivity is one background
   task; submitting a job reads the last known state.
@@ -207,19 +175,16 @@ always local.
 
 ## 5. Run the drill
 
-With the backend (and optionally the stand-in Swarm) running:
+With the backend running:
 
 ```bash
 python3 scripts/offline_drill.py --base-url http://127.0.0.1:8000
-python3 scripts/offline_drill.py --base-url http://127.0.0.1:8000 \
-        --swarm-url http://127.0.0.1:8899     # also checks the sync inbox
 ```
 
-It walks online → forced offline → alert panel while offline → restored →
-reconciled, and exits non-zero if any guarantee broke. Section *3b* is the
-weather pipeline: samples published, tornado classified, severity escalated,
-local engine, agent handoff chain, SMS segment math, Spanish translation,
-bilingual safety. That is the 21/21 run.
+It fetches one currently active alert from api.weather.gov, submits it online,
+forces offline, submits it again, restores, and reconciles. It exits non-zero if
+any guarantee broke: offline processing, local engine reported, agent handoff
+chain intact, severity not below NWS, bilingual safety advice, no job lost.
 
 Tests:
 
@@ -240,7 +205,6 @@ app/
   domain/alert.py      CAP 1.2 normalisation → NormalizedAlert
   knowledge/
     hazards.py         hazard taxonomy, severity rules, EN/ES playbooks
-    samples.py         10 demo alerts with expected classifications
   agents/
     weather.py         classification + escalation + confidence
     safety.py          severity tier → bilingual safety plan
@@ -250,7 +214,7 @@ app/
   i18n/terms.py        curated EN/ES phrasebook + coverage signal
   core/
     db.py              SQLite job store (WAL, survives restarts)
-    connectivity.py    background probe loop + hysteresis + demo switch
+    connectivity.py    background probe loop + hysteresis + forced-offline switch
     router.py          Swarm vs local decision + circuit breaker
     worker.py          bounded worker pool draining the queue
     sync.py            pushes offline results upstream on reconnect
@@ -259,7 +223,6 @@ app/
       local.py         offline engine (summarize/classify/extract + Ollama)
       swarm.py         Swarm client (timeouts, retries, response normalisation)
 scripts/
-  fake_swarm.py        local stand-in for the Swarm API
   offline_drill.py     repeatable online/offline proof
 tests/                 91 tests: store, connectivity, router, processors,
                        agents, translation, API
@@ -291,20 +254,18 @@ docs/                  frontend contract, Swarm agent prompts, team split
 
 ---
 
-## 8. Demo script (3 minutes)
+## 8. Walkthrough (live data)
 
-1. `GET /v1/health` → `mode: online`, Swarm configured, `pending_sync: 0`.
-2. `GET /v1/alerts/samples` → 10 alerts; point at `expected.escalated: true`
-   on `heat_understated` (the feed calls it moderate; we do not).
-3. `POST /v1/alerts` with `tornado_emergency` → `hazard: tornado`,
-   `severity: extreme`, `engine: local`, 3-step trace with each handoff line.
-4. Show `sms.en` (145 chars, 1 segment) next to `sms.es` (3 segments) and the
-   bilingual `safety.immediate` list.
-5. `POST /v1/demo/offline {"enabled": true}` → health flips to `offline`.
-6. Re-submit the same alert → identical classification, `offline: true`,
-   `sync_state: pending`, `queue.pending_sync: 1`.
-7. `POST /v1/demo/offline {"enabled": false}` → `POST /v1/sync/run` →
-   `{"status":"ok","sent":1}`, then `GET /v1/sync/inbox` on the stand-in.
-8. Close with: *"Classification and safety advice are deterministic and
+1. `GET /v1/health` → `connectivity.probes` shows whether api.weather.gov is
+   reachable; `swarm.last_call` shows the last Swarms call (ok/failed, ms).
+2. On the dashboard tap **Find live alert**: it picks an active NWS alert,
+   sets the NOAA point inside its area and polls. The card shows the NWS alert
+   ID with a link to api.weather.gov.
+3. Point at the card's "Written by" line: Swarms AI for the message text when
+   online, local rules for classification and safety.
+4. `POST /v1/demo/offline {"enabled": true}` → health flips to `offline`; new
+   alerts are written by local rules only.
+5. `POST /v1/demo/offline {"enabled": false}` → `POST /v1/sync/run`.
+6. Close with: *"Classification and safety advice are deterministic and
    identical in both modes; the network only changes who writes the prose. And
    the queue is SQLite, so a restart does not lose the warning."*

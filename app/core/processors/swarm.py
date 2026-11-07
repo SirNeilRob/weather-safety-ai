@@ -9,9 +9,10 @@ network is flaky:
 * any failure raises ``ProcessorUnavailable`` so the router can fall back to the
   local engine instead of surfacing a 500 to the user.
 
-The response parser accepts an OpenAI-compatible chat completion and a few
-near-misses, so a slightly different Swarm response shape does not require a
-code change mid-hackathon.
+Wire format is the Swarms API agent endpoint (``POST /v1/agent/completions``,
+``x-api-key`` auth, answer in ``outputs[].content``). The parser also accepts an
+OpenAI-style chat completion so a different gateway can be swapped in via
+``SWARM_ENDPOINT`` without a code change.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -65,8 +68,8 @@ class SwarmProcessor:
         self,
         base_url: str | None,
         api_key: str | None = None,
-        endpoint: str = "/v1/chat/completions",
-        model: str = "swarm-default",
+        endpoint: str = "/v1/agent/completions",
+        model: str = "gpt-4o-mini",
         timeout: float = 20.0,
         max_retries: int = 2,
         sync_endpoint: str | None = None,
@@ -84,6 +87,8 @@ class SwarmProcessor:
         self._transport = transport
         self.last_error: str | None = None
         self.last_status: int | None = None
+        #: Outcome of the most recent Swarms call: ok, ms, at, error.
+        self.last_call: dict | None = None
 
     # ------------------------------------------------------------------ config
     @property
@@ -100,11 +105,16 @@ class SwarmProcessor:
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["x-api-key"] = self.api_key
         return headers
 
     # ------------------------------------------------------------------ request body
     def _build_body(self, kind: str, payload: dict) -> dict:
+        """Build a Swarms ``/v1/agent/completions`` request.
+
+        Callers pass chat-style ``messages`` (or a bare prompt); system messages
+        become the agent's ``system_prompt`` and the rest becomes its ``task``.
+        """
         messages = payload.get("messages")
         if not isinstance(messages, list) or not messages:
             prompt = payload.get("prompt") or extract_text(payload)
@@ -112,30 +122,51 @@ class SwarmProcessor:
                 prompt = f"[task: {kind}]\n{prompt}"
             messages = [{"role": "user", "content": str(prompt)}]
 
-        body: dict[str, Any] = {
-            "model": payload.get("model") or self.model,
-            "messages": messages,
-            "stream": False,
+        system_parts, task_parts = [], []
+        for message in messages:
+            if not isinstance(message, dict):
+                task_parts.append(str(message))
+                continue
+            content = str(message.get("content", ""))
+            (system_parts if message.get("role") == "system" else task_parts).append(content)
+
+        agent_config: dict[str, Any] = {
+            "agent_name": payload.get("agent_name") or f"resq-{kind or 'default'}",
+            "system_prompt": "\n\n".join(system_parts)
+            or "You are a careful assistant for an emergency weather alerting system.",
+            "model_name": payload.get("model") or self.model,
+            "max_loops": 1,
+            "max_tokens": payload.get("max_tokens") or 1200,
+            "temperature": payload.get("temperature", 0.2),
         }
-
-        for source_key, target_key in (
-            ("temperature", "temperature"),
-            ("max_tokens", "max_tokens"),
-            ("top_p", "top_p"),
-            ("response_format", "response_format"),
-        ):
-            if source_key in payload and payload[source_key] is not None:
-                body[target_key] = payload[source_key]
-
         extra = payload.get("swarm_options")
         if isinstance(extra, dict):
-            body.update({k: v for k, v in extra.items() if k not in ("messages", "stream")})
-        return body
+            agent_config.update(extra)
+        return {"agent_config": agent_config, "task": "\n\n".join(task_parts)}
 
     # ------------------------------------------------------------------ parsing
     @staticmethod
     def _parse(data: Any) -> dict:
         if isinstance(data, dict):
+            outputs = data.get("outputs")
+            if isinstance(outputs, str) and outputs.strip():
+                outputs = [{"content": outputs}]
+            if isinstance(outputs, list):
+                texts = [
+                    item.get("content")
+                    for item in outputs
+                    if isinstance(item, dict) and isinstance(item.get("content"), str)
+                ]
+                if texts:
+                    return {
+                        "text": texts[-1],
+                        "model": (data.get("agent_config") or {}).get("model_name"),
+                        "usage": data.get("usage"),
+                        "job_id": data.get("job_id"),
+                        "engine": "swarm",
+                        "offline": False,
+                    }
+
             choices = data.get("choices")
             if isinstance(choices, list) and choices:
                 choice = choices[0] or {}
@@ -189,7 +220,27 @@ class SwarmProcessor:
     async def run(self, kind: str, payload: dict) -> dict:
         if not self.configured:
             raise ProcessorUnavailable("SWARM_BASE_URL is not configured")
+        started = time.monotonic()
+        try:
+            result = await self._call(kind, payload)
+        except asyncio.CancelledError:
+            self._record(started, "cancelled: caller timed out")
+            raise
+        except Exception as exc:
+            self._record(started, f"{type(exc).__name__}: {exc}")
+            raise
+        self._record(started, None)
+        return result
 
+    def _record(self, started: float, error: str | None) -> None:
+        self.last_call = {
+            "ok": error is None,
+            "ms": round((time.monotonic() - started) * 1000, 1),
+            "at": datetime.now(timezone.utc).isoformat(),
+            "error": error,
+        }
+
+    async def _call(self, kind: str, payload: dict) -> dict:
         body = self._build_body(kind, payload)
         client_kwargs: dict[str, Any] = {"timeout": httpx.Timeout(self.timeout)}
         if self._transport is not None:
@@ -265,7 +316,11 @@ class SwarmProcessor:
 
     # ------------------------------------------------------------------ agent drafting
     async def draft_communication(
-        self, alert: dict, classification: dict, safety: dict
+        self,
+        alert: dict,
+        classification: dict,
+        safety: dict,
+        official_title: dict | None = None,
     ) -> dict:
         """Ask Swarm to rewrite the four channels in both languages.
 
@@ -286,7 +341,11 @@ class SwarmProcessor:
             '"push": {"en": {"title": str, "body": str}, "es": {"title": str, "body": str}}, '
             '"bulletin": {"en": str, "es": str}, '
             '"voice": {"en": str, "es": str}}. '
-            "Spanish must be natural Spanish, not word-for-word English. "
+            "Spanish must be natural Spanish, not word-for-word English, and "
+            "always addresses the reader formally (usted). "
+            "Use official_title exactly as given, in each language, wherever the "
+            "alert type is named; never substitute another product word "
+            "(in Spanish a Warning is 'Aviso', never 'Advertencia'). "
             "SMS stays under 160 characters."
         )
         user = _json.dumps(
@@ -301,6 +360,7 @@ class SwarmProcessor:
                     "immediate": [item["en"] for item in safety.get("immediate", [])],
                     "avoid": [item["en"] for item in safety.get("avoid", [])],
                 },
+                "official_title": official_title or {},
             },
             ensure_ascii=False,
         )
@@ -312,7 +372,7 @@ class SwarmProcessor:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "response_format": {"type": "json_object"},
+                "agent_name": "ResQ Communication Agent",
                 "temperature": 0.2,
             },
         )
@@ -335,4 +395,5 @@ class SwarmProcessor:
             "sync_configured": self.can_sync,
             "last_status": self.last_status,
             "last_error": self.last_error,
+            "last_call": self.last_call,
         }
