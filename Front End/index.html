@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111b27">
+<title>ResQ | Emergency Weather</title>
+<style>
+:root{color-scheme:dark;--bg:#0d151f;--panel:#152230;--line:#304253;--ink:#eff6ff;--muted:#adc0d1;--mint:#95f0d0;--amber:#ffd094;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);line-height:1.5}header,main,footer{max-width:1020px;margin:auto;padding-inline:clamp(16px,4vw,40px)}header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:24px}.brand{display:flex;align-items:center;gap:12px}.logo{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:var(--mint);color:#12322e}.brand strong{font-size:1.35rem;display:block;line-height:1.15}small,.muted{color:var(--muted)}.tag,.eyebrow{text-transform:uppercase;font-weight:750;font-size:.7rem;letter-spacing:.12em}.tag{display:inline-block;border:1px solid var(--line);border-radius:30px;padding:6px 10px}.eyebrow{color:var(--mint);margin:0 0 6px}.hero{background:radial-gradient(ellipse at top right,#254c55,transparent 66%),#182938;border:1px solid #395364;border-radius:24px;overflow:hidden}.hero-grid{display:grid;gap:22px;padding:clamp(20px,5vw,40px)}h1,h2,h3,p{margin:0}h1{font-size:clamp(1.65rem,5vw,2.65rem);line-height:1.14;overflow-wrap:anywhere}h2{font-size:1.2rem}h3{font-size:1rem}.clock{display:block;font-weight:750;font-size:clamp(2.6rem,8vw,4.6rem);letter-spacing:-.055em;line-height:1.05;font-variant-numeric:tabular-nums;margin-block:10px}.date{font-size:1rem}.weather{border-top:1px solid #54717a;padding-top:18px;min-width:0}.reading{display:flex;align-items:center;gap:13px;margin:10px 0}.reading svg{color:var(--mint);flex:none}.temperature{font-size:2.65rem;font-weight:750;line-height:1}.details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:#10202b}.details div{padding:14px 10px;text-align:center}.details div+div{border-left:1px solid var(--line)}dt{font-size:.75rem;color:var(--muted)}dd{font-weight:700;margin:3px 0 0}.panels{display:grid;gap:14px;margin-top:14px}.panel{padding:clamp(16px,3vw,25px);border:1px solid var(--line);border-radius:18px;background:var(--panel)}.alerts{border-left:4px solid var(--amber)}.alerts .eyebrow,.caution{color:var(--amber)}.stack>*+*{margin-top:10px}.actions{display:flex;flex-wrap:wrap;gap:8px}button,input,summary{font:inherit}button{cursor:pointer;border:1px solid #526b7b;border-radius:9px;padding:9px 13px;min-height:44px;background:#213445;color:var(--ink);font-weight:650}button.primary{background:var(--mint);color:#12322e;border-color:var(--mint)}button:disabled{cursor:wait;opacity:.68}button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid var(--amber);outline-offset:3px}details summary{cursor:pointer;min-height:44px;display:list-item;padding-block:10px;color:var(--mint)}label{display:grid;gap:4px;font-size:.87rem}input{width:100%;min-height:44px;border:1px solid #526b7b;border-radius:8px;background:#101b26;color:var(--ink);padding:8px}.coords{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.notice{padding:12px;border:1px solid #796344;border-radius:10px;background:#30281d;overflow-wrap:anywhere}.notice time{display:block;color:var(--amber);font-size:.8rem}a{color:var(--mint)}footer{padding-block:20px 30px;font-size:.8rem;color:var(--muted)}[hidden]{display:none!important}
+@media(min-width:700px){.hero-grid{grid-template-columns:1fr 1fr;align-items:center}.weather{border-top:0;border-left:1px solid #54717a;padding:0 0 0 30px}.panels{grid-template-columns:1fr 1fr;align-items:start}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo" aria-hidden="true"><svg width="27" height="27" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M16 3 27 8v7c0 6-4.5 10.5-11 14C9.5 25.5 5 21 5 15V8z"/><path d="M16 10v12m-6-6h12"/></svg></span><div><strong>ResQ</strong><small>Emergency weather</small></div></div>
+  <span class="tag">Hotspot dashboard</span>
+</header>
+<main>
+  <noscript><p class="notice">Enable JavaScript to show the device clock, weather, and local notices.</p></noscript>
+  <section class="hero" aria-label="Time and weather">
+    <div class="hero-grid">
+      <div><p class="eyebrow" id="location-source">Weather location</p><h1 id="location">Choose a location</h1><time class="clock" id="clock">--:--</time><p id="date" class="date"></p><small>Clock on this phone or computer</small></div>
+      <div class="weather">
+        <p class="eyebrow" id="weather-state">Weather unavailable</p>
+        <div class="reading" id="reading" hidden>
+          <svg aria-hidden="true" width="42" height="42" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14 26a9 9 0 1 1 15-10M19 5v3M7 10l3 3M3 22h4m25-12-3 3"/><path d="M16 39a7 7 0 0 1-1-14 11 11 0 0 1 20 2 6 6 0 0 1 0 12Z"/></svg>
+          <div><div id="temp" class="temperature"></div><p id="condition"></p></div>
+        </div>
+        <p id="weather-message" class="muted" role="status">Select a location to fetch weather.</p>
+        <small id="weather-times"></small>
+      </div>
+    </div>
+    <dl class="details" aria-label="Weather details">
+      <div><dt>Feels like</dt><dd id="feels">—</dd></div>
+      <div><dt>Humidity</dt><dd id="humidity">—</dd></div>
+      <div><dt>Wind</dt><dd id="wind">—</dd></div>
+    </dl>
+  </section>
+  <div class="panels">
+    <section class="panel alerts stack" aria-labelledby="alerts-title">
+      <p class="eyebrow">ResQ operator notices</p>
+      <h2 id="alerts-title">Emergency alerts</h2>
+      <p id="alerts-status" class="muted" role="status">Checking the local notice file…</p>
+      <div id="alerts-list" class="stack" aria-live="polite"></div>
+      <p class="muted">Official warning feeds are outside this dashboard. Follow instructions from your local emergency authorities.</p>
+    </section>
+    <section class="panel stack" aria-labelledby="location-title">
+      <p class="eyebrow">Weather settings</p>
+      <h2 id="location-title">Set your location</h2>
+      <p id="location-help" class="muted"></p>
+      <div class="actions">
+        <button id="gps" type="button">Use my location</button>
+        <button id="preset" type="button">Use South Florida preset</button>
+      </div>
+      <details>
+        <summary>Enter coordinates manually</summary>
+        <form id="manual" class="stack">
+          <label>Place name (optional)<input name="label" maxlength="60" placeholder="My neighborhood"></label>
+          <div class="coords">
+            <label>Latitude<input name="latitude" type="number" inputmode="decimal" min="-90" max="90" step="any" required placeholder="25.76"></label>
+            <label>Longitude<input name="longitude" type="number" inputmode="decimal" min="-180" max="180" step="any" required placeholder="-80.19"></label>
+          </div>
+          <button type="submit">Save location</button>
+        </form>
+      </details>
+      <p id="location-status" class="muted" role="status"></p>
+      <div class="actions">
+        <button id="refresh" type="button" class="primary">Fetch weather</button>
+        <button id="demo" type="button" aria-pressed="false">Show demo</button>
+        <button id="clear" type="button">Clear saved data</button>
+      </div>
+      <small>Fetching weather sends the selected coordinates to Open-Meteo. Location and the latest reading are saved in this browser when storage is available.</small>
+    </section>
+  </div>
+</main>
+<footer>ResQ · Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> · This link requires internet.</footer>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const key = 'resq-dashboard-v1';
+const staleAfter = 60 * 60 * 1000;
+const preset = {label:'South Florida', latitude:25.76, longitude:-80.19, source:'Preset · Miami area'};
+const sample = {temperature:82, feels:86, humidity:72, wind:12, code:2};
+let saved;
+try { saved = JSON.parse(localStorage.getItem(key)); } catch {}
+const validLocation = p => p && typeof p.label === 'string' && typeof p.source === 'string' &&
+  Number.isFinite(p.latitude) && Math.abs(p.latitude) <= 90 &&
+  Number.isFinite(p.longitude) && Math.abs(p.longitude) <= 180;
+const validReading = r => r && ['temperature','feels','humidity','wind','code','dataAt','fetchedAt']
+  .every(field => Number.isFinite(r[field])) && r.humidity >= 0 && r.humidity <= 100 && r.wind >= 0;
+let locationChoice = validLocation(saved?.place) ? saved.place : null;
+let reading = locationChoice && validReading(saved?.reading) ? saved.reading : null;
+let fromCache = Boolean(reading);
+let demo = false;
+let request;
+let locationVersion = 0;
+let weatherMessage = '';
+let notices = null;
+const stamp = value => new Date(value).toLocaleString(undefined, {
+  year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'
+});
+const secureGPS = window.isSecureContext && Boolean(navigator.geolocation);
+$('location-help').textContent = secureGPS
+  ? 'Use my location to ask for browser permission, or pick a preset or enter coordinates.'
+  : 'This browser cannot provide GPS on this page. On the HTTP hotspot, use the preset or enter coordinates.';
+function persist() {
+  try { localStorage.setItem(key, JSON.stringify({place:locationChoice, reading})); }
+  catch { $('location-status').textContent = 'Browser storage is unavailable. Your selection and weather may only last until this page closes.'; }
+}
+function weatherName(code) {
+  const names = {0:'Clear',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Freezing fog',
+    51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',56:'Light freezing drizzle',57:'Freezing drizzle',
+    61:'Light rain',63:'Rain',65:'Heavy rain',66:'Light freezing rain',67:'Freezing rain',
+    71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',80:'Light rain showers',
+    81:'Rain showers',82:'Heavy rain showers',85:'Light snow showers',86:'Heavy snow showers',
+    95:'Thunderstorm',96:'Thunderstorm with hail',99:'Thunderstorm with heavy hail'};
+  return names[code] || 'Condition unknown';
+}
+function renderWeather() {
+  const item = demo ? sample : reading;
+  const stale = reading && (Date.now() - reading.dataAt >= staleAfter ||
+    Date.now() - reading.fetchedAt >= staleAfter || reading.dataAt > Date.now() + 20 * 60000 ||
+    reading.fetchedAt > Date.now() + 20 * 60000);
+  $('location').textContent = demo ? 'South Florida example' : locationChoice?.label || 'Choose a location';
+  $('location-source').textContent = demo ? 'Demo location' : locationChoice?.source || 'Weather location';
+  $('weather-state').textContent = demo ? 'Demo · Sample weather' : item
+    ? stale ? 'Stale · Last saved weather' : fromCache ? 'Cached · Last saved weather' : 'Current weather · Open-Meteo'
+    : request ? 'Fetching weather' : 'Weather unavailable';
+  $('weather-state').classList.toggle('caution', demo || Boolean(stale));
+  $('reading').hidden = !item;
+  $('temp').textContent = item ? Math.round(item.temperature) + '°F' : '';
+  $('condition').textContent = item ? weatherName(item.code) : '';
+  $('feels').textContent = item ? Math.round(item.feels) + '°F' : '—';
+  $('humidity').textContent = item ? Math.round(item.humidity) + '%' : '—';
+  $('wind').textContent = item ? Math.round(item.wind) + ' mph' : '—';
+  const message = demo ? 'Illustration only. These values are fictional.' : weatherMessage ||
+    (stale ? 'These values may no longer reflect conditions.' : item ? (fromCache ? 'Showing a reading saved on this device.' : 'Model-based conditions for the selected location.') :
+      locationChoice ? 'Tap Fetch weather when this browser has internet.' : 'Select a location to fetch weather.');
+  if ($('weather-message').textContent !== message) $('weather-message').textContent = message;
+  $('weather-times').textContent = !demo && item ? 'Data time ' + stamp(item.dataAt) + ' · Retrieved ' + stamp(item.fetchedAt) : '';
+  $('refresh').disabled = Boolean(request);
+  $('demo').textContent = demo ? 'Exit demo' : 'Show demo';
+  $('demo').setAttribute('aria-pressed', String(demo));
+}
+function selectPlace(place) {
+  locationVersion++;
+  request?.abort();
+  request = null;
+  if (!locationChoice || locationChoice.latitude !== place.latitude || locationChoice.longitude !== place.longitude) {
+    reading = null;
+    fromCache = false;
+  }
+  locationChoice = place;
+  demo = false;
+  weatherMessage = '';
+  $('location-status').textContent = 'Selected ' + place.label + '.';
+  persist();
+  renderWeather();
+}
+$('preset').onclick = () => selectPlace(preset);
+$('manual').onsubmit = event => {
+  event.preventDefault();
+  const fields = event.currentTarget.elements;
+  const latitude = fields.latitude.valueAsNumber;
+  const longitude = fields.longitude.valueAsNumber;
+  const label = fields.label.value.trim() || latitude.toFixed(3) + ', ' + longitude.toFixed(3);
+  const place = {label, latitude, longitude, source:'Manual location'};
+  if (validLocation(place)) selectPlace(place);
+};
+$('gps').onclick = () => {
+  if (!secureGPS) {
+    $('location-status').textContent = 'GPS is unavailable here. Choose the preset or enter coordinates below.';
+    return;
+  }
+  const version = ++locationVersion;
+  $('location-status').textContent = 'Waiting for location permission and a position…';
+  navigator.geolocation.getCurrentPosition(position => {
+    if (version !== locationVersion) return;
+    const {latitude, longitude} = position.coords;
+    selectPlace({label:'Device location', latitude, longitude, source:'Browser location · Permission granted'});
+  }, error => {
+    if (version !== locationVersion) return;
+    $('location-status').textContent = (error.code === 1 ? 'Location permission was denied or blocked.' :
+      'The device could not get a location.') + ' Choose the preset or enter coordinates.';
+  }, {timeout:10000, maximumAge:0});
+};
+$('demo').onclick = () => { demo = !demo; renderWeather(); };
+$('clear').onclick = () => {
+  locationVersion++;
+  request?.abort();
+  request = null;
+  reading = locationChoice = null;
+  fromCache = demo = false;
+  weatherMessage = '';
+  $('manual').reset();
+  $('location-status').textContent = 'Saved location and weather cleared.';
+  try { localStorage.removeItem(key); }
+  catch { $('location-status').textContent = 'On-screen data cleared. Browser storage could not be accessed.'; }
+  renderWeather();
+};
+$('refresh').onclick = async () => {
+  demo = false;
+  if (!locationChoice) {
+    weatherMessage = 'Choose a location in Weather settings first.';
+    renderWeather();
+    return;
+  }
+  const controller = new AbortController();
+  request = controller;
+  if (reading) fromCache = true;
+  weatherMessage = 'Contacting Open-Meteo…';
+  renderWeather();
+  const timer = setTimeout(() => controller.abort(), 9000);
+  try {
+    const query = new URLSearchParams({
+      latitude:locationChoice.latitude.toFixed(4), longitude:locationChoice.longitude.toFixed(4),
+      current:'temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code',
+      temperature_unit:'fahrenheit', wind_speed_unit:'mph', timeformat:'unixtime', timezone:'GMT'
+    });
+    const response = await fetch('https://api.open-meteo.com/v1/forecast?' + query, {
+      signal:controller.signal, cache:'no-store'
+    });
+    if (!response.ok) throw new Error('Weather request failed');
+    const {current:c} = await response.json();
+    const next = {temperature:c.temperature_2m, feels:c.apparent_temperature, humidity:c.relative_humidity_2m,
+      wind:c.wind_speed_10m, code:c.weather_code, dataAt:typeof c.time === 'number' ? c.time * 1000 : NaN, fetchedAt:Date.now()};
+    if (!validReading(next)) throw new Error('Incomplete weather response');
+    if (request !== controller) return;
+    reading = next;
+    fromCache = false;
+    weatherMessage = '';
+    persist();
+  } catch {
+    if (request !== controller) return;
+    weatherMessage = reading ? 'Refresh failed. Showing saved weather for this location.' :
+      'Weather service could not be reached or returned unusable data. Try again when this browser has internet.';
+  } finally {
+    clearTimeout(timer);
+    if (request === controller) { request = null; renderWeather(); }
+  }
+};
+const validNotice = notice => notice && typeof notice.title === 'string' && notice.title.trim() &&
+  typeof notice.message === 'string' && notice.message.trim() && typeof notice.expiresAt === 'string' &&
+  /(?:Z|[+-]\d{2}:\d{2})$/.test(notice.expiresAt) && Number.isFinite(Date.parse(notice.expiresAt));
+function renderNotices() {
+  const active = notices?.filter(notice => Date.parse(notice.expiresAt) > Date.now()) || [];
+  const text = notices ? active.length ? 'Posted on this ResQ hotspot.' : 'No active operator notices are posted.' :
+    'Local notice file unavailable or invalid. Alert status is unknown.';
+  if ($('alerts-status').textContent !== text) $('alerts-status').textContent = text;
+  const list = $('alerts-list');
+  const signature = JSON.stringify(active);
+  if (list.dataset.notices === signature) return;
+  list.dataset.notices = signature;
+  list.replaceChildren(...active.map(notice => {
+    const article = document.createElement('article');
+    article.className = 'notice stack';
+    const heading = document.createElement('h3');
+    heading.textContent = notice.title;
+    const message = document.createElement('p');
+    message.textContent = notice.message;
+    const expires = document.createElement('time');
+    expires.dateTime = notice.expiresAt;
+    expires.textContent = 'Expires ' + stamp(Date.parse(notice.expiresAt));
+    article.append(heading, message, expires);
+    return article;
+  }));
+}
+async function checkNotices() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch('./alerts.json', {cache:'no-store', signal:controller.signal});
+    if (!response.ok) throw new Error('Notice file unavailable');
+    const data = await response.json();
+    if (!Array.isArray(data) || !data.every(validNotice)) throw new Error('Invalid notice file');
+    notices = data;
+  } catch { notices = null; }
+  finally { clearTimeout(timer); renderNotices(); }
+}
+function updateClock() {
+  const now = new Date();
+  $('clock').textContent = now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit',second:'2-digit'});
+  $('clock').dateTime = now.toISOString();
+  $('date').textContent = now.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric',year:'numeric'});
+}
+updateClock();
+renderWeather();
+checkNotices();
+setInterval(updateClock, 1000);
+setInterval(renderWeather, 15000);
+setInterval(checkNotices, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { updateClock(); renderWeather(); }
+});
+</script>
+</body>
+</html>
