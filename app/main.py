@@ -85,6 +85,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "POST /v1/demo/offline",
                 "POST /v1/sync/run",
                 "GET /v1/alerts/active",
+                "GET /v1/noaa",
+                "POST /v1/noaa/poll",
+                "GET /v1/watchlist",
+                "POST /v1/watchlist",
+                "POST /v1/watchlist/point",
+                "DELETE /v1/watchlist/{key}",
             ],
         }
 

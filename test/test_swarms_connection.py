@@ -3,8 +3,8 @@ import requests
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load the .env file from the project folder
-project_folder = Path(__file__).resolve().parent
+# Load the .env file from the repo root (this file lives in test/)
+project_folder = Path(__file__).resolve().parent.parent
 load_dotenv(project_folder / ".env", override=True)
 
 # Get Swarms API key

@@ -38,6 +38,9 @@ def _csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+NWS_PROBE = "https://api.weather.gov"
+
+
 def load_env_file(path: str | os.PathLike[str]) -> None:
     """Minimal .env loader. Real environment variables always win."""
     candidate = Path(path)
@@ -77,7 +80,7 @@ class Settings:
 
     # --- Connectivity probing ----------------------------------------------
     #: "Internet" means the board can reach NWS, the data source that matters.
-    probe_urls: tuple[str, ...] = ("https://api.weather.gov",)
+    probe_urls: tuple[str, ...] = (NWS_PROBE,)
     probe_interval: float = 5.0
     probe_timeout: float = 3.0
     offline_after_failures: int = 2
@@ -102,10 +105,8 @@ class Settings:
 
     # --- NOAA / National Weather Service -----------------------------------
     noaa_enabled: bool = True
-    #: No default location: set NOAA_LAT/NOAA_LON, or set it from the dashboard
-    #: (browser GPS or "Find live alert"). Until then NOAA is not polled.
-    noaa_latitude: float | None = None
-    noaa_longitude: float | None = None
+    #: Locations come only from the dashboard watch list (no default city).
+    watchlist_max: int = 5
     noaa_poll_interval: float = 60.0
     #: NWS requires an identifying User-Agent on every request.
     noaa_user_agent: str = "ResQ-weather-safety/0.1 (+https://github.com/SirNeilRob/weather-safety-ai)"
@@ -151,7 +152,9 @@ class Settings:
             swarm_timeout=_number("SWARM_TIMEOUT", cls.swarm_timeout),
             swarm_max_retries=int(_number("SWARM_MAX_RETRIES", cls.swarm_max_retries, int)),
             swarm_sync_endpoint=sync_endpoint,
-            probe_urls=_csv("PROBE_URLS", cls.probe_urls),
+            # "Internet" on the dashboard means "can reach api.weather.gov", so it
+            # is always probed first, even if a stale PROBE_URLS is exported.
+            probe_urls=tuple(dict.fromkeys((NWS_PROBE, *_csv("PROBE_URLS", cls.probe_urls)))),
             probe_interval=_number("PROBE_INTERVAL", cls.probe_interval),
             probe_timeout=_number("PROBE_TIMEOUT", cls.probe_timeout),
             offline_after_failures=int(
@@ -168,8 +171,7 @@ class Settings:
             alert_cloud_stages=_csv("ALERT_CLOUD_STAGES", cls.alert_cloud_stages),
             alert_cloud_timeout=_number("ALERT_CLOUD_TIMEOUT", cls.alert_cloud_timeout),
             noaa_enabled=_flag("NOAA_ENABLED", cls.noaa_enabled),
-            noaa_latitude=_number("NOAA_LAT", cls.noaa_latitude),
-            noaa_longitude=_number("NOAA_LON", cls.noaa_longitude),
+            watchlist_max=int(_number("WATCHLIST_MAX", cls.watchlist_max)),
             noaa_poll_interval=_number("NOAA_POLL_INTERVAL", cls.noaa_poll_interval),
             noaa_user_agent=os.getenv("NOAA_USER_AGENT", cls.noaa_user_agent),
             worker_count=max(1, int(_number("WORKER_COUNT", cls.worker_count, int))),

@@ -16,7 +16,7 @@ from app.main import create_app
 
 UA = Settings().noaa_user_agent
 HEADERS = {"User-Agent": UA, "Accept": "application/geo+json"}
-MIAMI = (25.76, -80.19)
+MIAMI_ZIP = "33130"
 
 
 def _reachable() -> bool:
@@ -35,8 +35,6 @@ def client(tmp_path):
         db_path=tmp_path / "noaa.db",
         swarm_base_url=None,
         probe_urls=(f"{NWS_BASE}/alerts/types",),
-        noaa_latitude=MIAMI[0],
-        noaa_longitude=MIAMI[1],
         noaa_poll_interval=3600.0,
         worker_idle_poll=0.05,
     )
@@ -76,18 +74,24 @@ def test_real_nws_alerts_run_through_the_pipeline() -> None:
             break
 
 
-def test_backend_polls_noaa_for_the_location(client) -> None:
+def test_backend_polls_noaa_for_a_watched_zip(client) -> None:
+    added = client.post("/v1/watchlist", json={"zip": MIAMI_ZIP})
+    assert added.status_code == 201, added.text
+    # Name comes from NWS /points relativeLocation, never guessed.
+    assert added.json()["city"]["name"], added.json()
+
     poll = client.post("/v1/noaa/poll").json()
     assert poll["status"] == "ok", poll
 
     status = client.get("/v1/noaa").json()
-    assert status["point"] == {"latitude": MIAMI[0], "longitude": MIAMI[1]}
     assert status["last_error"] is None
-    observation = status["observation"]
+    [city] = status["cities"]
+    assert city["zip"] == MIAMI_ZIP
+    observation = city["observation"]
     assert observation and observation["station"]["id"]
     assert observation["observed_at"]
 
-    # Every alert NWS lists for the point reaches the dashboard feed, processed.
+    # Every alert NWS lists for the city reaches the dashboard feed, tagged with it.
     if poll["active"]:
         import time
 
@@ -99,17 +103,15 @@ def test_backend_polls_noaa_for_the_location(client) -> None:
             time.sleep(0.2)
         assert len(active) == poll["active"]
         assert all(job["result"]["classification"]["hazard"] for job in active)
+        assert all(job["cities"][0]["zip"] == MIAMI_ZIP for job in active)
 
     # A second poll does not queue the same alerts again.
     again = client.post("/v1/noaa/poll").json()
     assert again["new"] == 0
 
 
-def test_moving_the_location_replaces_the_noaa_picture(client) -> None:
+def test_removing_the_city_hides_its_alerts(client) -> None:
+    client.post("/v1/watchlist", json={"zip": MIAMI_ZIP})
     client.post("/v1/noaa/poll")
-    moved = client.post(
-        "/v1/noaa/location", json={"latitude": 41.9779, "longitude": -91.6656, "label": "Cedar Rapids"}
-    ).json()
-    assert moved["moved"] is True
-    assert moved["observation"] is None
-    assert moved["polled"] is False
+    assert client.delete(f"/v1/watchlist/{MIAMI_ZIP}").json()["cities"] == []
+    assert client.get("/v1/noaa").json()["active_alerts"] == 0

@@ -46,7 +46,6 @@ label{display:grid;gap:4px;font-size:.85rem;color:var(--muted)}
 .msg.err{border-color:#f87171}.msg.ok{border-color:var(--mint)}
 /* alert cards */
 .card{border:1px solid var(--line);border-left:8px solid var(--sev,var(--line));border-radius:14px;padding:14px;background:var(--panel2)}
-.card.picked{box-shadow:0 0 0 3px var(--mint)}
 .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .card h3{font-size:1.3rem;line-height:1.25}
 .pill{flex:none;border-radius:999px;padding:4px 12px;font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;background:var(--sev,#2a3c4d);color:#fff}
@@ -76,8 +75,17 @@ label{display:grid;gap:4px;font-size:.85rem;color:var(--muted)}
 .jobs code{color:var(--muted)}
 .jobs .t{grid-column:1/-1;color:var(--muted);overflow-wrap:anywhere}
 .st-done{color:var(--mint)}.st-failed{color:var(--red)}.st-pending,.st-running{color:var(--amber)}
-.coords{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-details summary{cursor:pointer;color:var(--mint);min-height:44px;display:list-item;padding-block:8px}
+.zipform{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
+.cities{list-style:none;margin:0;padding:0}
+.cities li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)}
+.cities li:first-child{border-top:0}
+.cities button{min-height:44px;min-width:44px;padding:4px 10px}
+.wx{border-top:1px solid var(--line);padding-top:12px}
+.wx:first-child{border-top:0;padding-top:0}
+.browse{list-style:none;margin:0;padding:0}
+.browse li{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:.9rem}
+.browse li:first-child{border-top:0}
+.city-line{font-weight:700}
 .notice{border:1px solid #796344;background:#30281d;border-radius:10px;padding:10px}
 footer{color:var(--muted);font-size:.8rem;padding-bottom:24px}
 [hidden]{display:none!important}
@@ -100,27 +108,34 @@ footer{color:var(--muted);font-size:.8rem;padding-bottom:24px}
 <div class="wrap grid">
   <main class="panel stack" aria-labelledby="t-alerts">
     <p class="eyebrow" id="t-pipeline">Alert pipeline</p>
-    <div class="row" style="justify-content:space-between">
-      <h1 id="t-alerts" style="font-size:1.6rem">Active alerts</h1>
-      <button type="button" class="primary" id="find">Find live alert</button>
-    </div>
-    <div id="find-msg" class="msg" hidden aria-live="polite"></div>
+    <h1 id="t-alerts" style="font-size:1.6rem">Active alerts</h1>
     <p id="alerts-status" class="muted" role="status">—</p>
     <div id="cards" class="stack" aria-live="polite"></div>
     <p id="hidden-note" class="muted" hidden></p>
   </main>
 
   <aside class="stack">
+    <section class="panel stack" aria-labelledby="t-watch">
+      <p class="eyebrow" id="t-watch">Watch list</p>
+      <form id="zipform" class="zipform">
+        <label><span id="t-zip">Florida ZIP code</span><input name="zip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" autocomplete="postal-code" required></label>
+        <button type="submit" class="primary" id="t-add">Add</button>
+      </form>
+      <p id="watch-msg" class="muted" role="status"></p>
+      <ul class="cities" id="cities"></ul>
+      <p id="watch-count" class="muted">—</p>
+    </section>
+
     <section class="panel stack" aria-labelledby="t-weather">
       <p class="eyebrow" id="t-weather">NOAA weather</p>
-      <h2 id="wx-place" style="font-size:1.2rem">—</h2>
-      <div class="row"><span class="temp" id="wx-temp">—</span><div><p id="wx-text" style="font-weight:700">—</p><p class="muted" id="wx-station">—</p></div></div>
-      <dl class="facts">
-        <div><dt id="t-wind">Wind</dt><dd id="wx-wind">—</dd></div>
-        <div><dt id="t-feels">Feels like</dt><dd id="wx-feels">—</dd></div>
-        <div><dt id="t-hum">Humidity</dt><dd id="wx-hum">—</dd></div>
-      </dl>
-      <p class="muted" id="wx-time">—</p>
+      <div id="wx" class="stack"><p class="muted">—</p></div>
+    </section>
+
+    <section class="panel stack" aria-labelledby="t-browse">
+      <p class="eyebrow" id="t-browse">Browse Florida</p>
+      <button type="button" id="browse-load">Show active Florida alerts</button>
+      <p id="browse-msg" class="muted" role="status"></p>
+      <ul class="browse" id="browse"></ul>
     </section>
 
     <section class="panel stack" aria-labelledby="t-queue">
@@ -133,23 +148,6 @@ footer{color:var(--muted);font-size:.8rem;padding-bottom:24px}
       <p class="muted" id="q-extra">—</p>
       <h3 id="t-jobs" style="font-size:1rem">Last 10 jobs</h3>
       <ul class="jobs" id="jobs"><li><span class="t">—</span></li></ul>
-    </section>
-
-    <section class="panel stack" aria-labelledby="t-loc">
-      <p class="eyebrow" id="t-loc">NOAA location</p>
-      <p id="loc-now">—</p>
-      <div class="row"><button type="button" id="gps">Use my location</button></div>
-      <details>
-        <summary id="t-manual">Enter coordinates</summary>
-        <form id="manual" class="stack">
-          <div class="coords">
-            <label><span id="t-lat">Latitude</span><input name="latitude" type="number" inputmode="decimal" min="-90" max="90" step="any" required></label>
-            <label><span id="t-lon">Longitude</span><input name="longitude" type="number" inputmode="decimal" min="-180" max="180" step="any" required></label>
-          </div>
-          <button type="submit" id="t-save">Set location and poll NOAA</button>
-        </form>
-      </details>
-      <p id="loc-msg" class="muted" role="status"></p>
     </section>
 
     <section class="panel stack" aria-labelledby="t-notices">
@@ -173,50 +171,50 @@ const NWS = 'https://api.weather.gov';
 const cacheKey = 'resq-ops-v1', langKey = 'resq-lang-v1';
 
 const T = {
-  en:{sub:'ops', pipeline:'Alert pipeline', alerts:'Active alerts', find:'Find live alert', finding:'Searching NWS…',
+  en:{sub:'ops', pipeline:'Alert pipeline', alerts:'Active alerts',
     internet:'Internet', down:'Backend unreachable', forced:'forced offline', up:'reachable', unreach:'unreachable', noProbe:'no api.weather.gov probe configured',
+    wxUp:'weather.gov reachable', wxDown:'weather.gov unreachable',
     swarm:'Swarms', notConf:'not configured', noCall:'no call yet', callOk:'last call ok', callFail:'last call failed',
-    noaa:'NOAA', never:'not polled yet', nextIn:'next in ', due:'due now', pollOk:'poll ok', pollFail:'poll failed', setLoc:'Set location', notPolled:'not polled until a location is set',
+    noaa:'NOAA', never:'not polled yet', nextIn:'next in ', due:'due now', pollOk:'poll ok', pollFail:'poll failed', noCities:'no cities', notPolled:'not polled until a city is added',
     writtenBy:'Written by', swarmsW:'Swarms AI', localW:'Local rules', mixedW:'Swarms AI + local rules', stage:{weather:'classify', safety:'safety', communication:'message'},
-    setLocHelp:'Set location: use GPS, enter coordinates, or tap Find live alert. No weather is shown until then.',
-    live:'Live from the ResQ backend.', none:'No active NWS alerts at the backend location.', cached:'Backend unreachable. Showing data saved on this device at ',
+    live:'Live from the ResQ backend.', none:'No active NWS alerts for the watched cities.', cached:'Backend unreachable. Showing data saved on this device at ',
     nocache:'Backend unreachable and nothing saved on this device.', connecting:'Connecting to the ResQ backend…',
     hiddenNote:n => `${n} active alert(s) hidden: not from NWS (no verifiable NWS ID).`,
     hazard:'Hazard', level:'Level', area:'Area', expires:'Expires', engine:'Engine', route:'routed via', nwsId:'NWS alert ID', verify:'verify on weather.gov',
     immediate:'Do now', avoid:'Avoid', prepare:'Prepare', official:'Official instruction', auto:'Automatic translation', coverage:'coverage',
-    raised:'Severity raised by ResQ: ', evac:'Evacuation recommended', shelter:'Take shelter', advice:'Safety advice', picked:'Picked',
+    raised:'Severity raised by ResQ: ', evac:'Evacuation recommended', shelter:'Take shelter', advice:'Safety advice', city:'City',
     weather:'NOAA weather', wind:'Wind', feels:'Feels like', hum:'Humidity', observed:'Observed ', at:' at ',
     queue:'Pipeline', pending:'pending', done:'done', failed:'failed', running:'running', pendingSync:'awaiting sync', total:'total', jobs:'Last 10 jobs', noJobs:'No jobs yet.',
-    loc:'NOAA location', gps:'Use my location', manual:'Enter coordinates', lat:'Latitude', lon:'Longitude', save:'Set location and poll NOAA',
-    noGps:'GPS is unavailable on this page (needs HTTPS or localhost). Enter coordinates instead.', locSet:'Location set. Polling NOAA…', locFail:'Could not set location: ',
+    watch:'Watch list', zip:'Florida ZIP code', add:'Add', remove:'Remove', empty:'Add a ZIP code to start watching a city.', zipLabel:z => `ZIP ${z}`,
+    count:(n, m) => `${n} of ${m} cities`, adding:'Adding…', addFail:'Could not add: ', removeFail:'Could not remove: ', polling:'Added. Polling NOAA…',
+    browse:'Browse Florida', browseLoad:'Show active Florida alerts', browseLoading:'Loading Florida alerts from NWS…', browseNone:'No active alerts in FL right now',
+    browseCount:n => `${n} active alert(s) in FL (from api.weather.gov)`, addWatch:'Add to watch list', noArea:'NWS gave no usable area for this alert.',
+    severity:'Severity',
     notices:'Operator notices', noNotices:'No active operator notices.', noticeBad:'Local notice file unavailable or invalid.',
     foot:'Alerts and observations: NOAA National Weather Service (api.weather.gov). Always follow instructions from local emergency authorities.',
-    nwsFail:'Could not reach api.weather.gov from this device: ', noCand:'NWS returned no active land alert with a usable area.',
-    pickedMsg:'Picked NWS alert', pollRes:'Backend poll', waiting:'Waiting for the pipeline to process it…', ready:'Processed. Card highlighted below.',
-    notFound:'Not in /v1/alerts/active after 60 s. The backend may not have received it for this point; check the backend log.',
-    backendFail:'Backend request failed: '},
-  es:{sub:'operaciones', pipeline:'Flujo de alertas', alerts:'Alertas activas', find:'Buscar alerta real', finding:'Buscando en NWS…',
+    nwsFail:'Could not reach api.weather.gov from this device: '},
+  es:{sub:'operaciones', pipeline:'Flujo de alertas', alerts:'Alertas activas',
     internet:'Internet', down:'Servidor no disponible', forced:'sin conexión forzada', up:'disponible', unreach:'no disponible', noProbe:'sin sondeo de api.weather.gov',
+    wxUp:'weather.gov disponible', wxDown:'weather.gov no disponible',
     swarm:'Swarms', notConf:'no configurado', noCall:'sin llamadas aún', callOk:'última llamada correcta', callFail:'última llamada fallida',
-    noaa:'NOAA', never:'aún sin consultar', nextIn:'próxima en ', due:'pendiente', pollOk:'consulta correcta', pollFail:'consulta fallida', setLoc:'Fije la ubicación', notPolled:'sin consultas hasta fijar una ubicación',
+    noaa:'NOAA', never:'aún sin consultar', nextIn:'próxima en ', due:'pendiente', pollOk:'consulta correcta', pollFail:'consulta fallida', noCities:'sin ciudades', notPolled:'sin consultas hasta agregar una ciudad',
     writtenBy:'Redactado por', swarmsW:'IA de Swarms', localW:'Reglas locales', mixedW:'IA de Swarms + reglas locales', stage:{weather:'clasificación', safety:'seguridad', communication:'mensaje'},
-    setLocHelp:'Fije la ubicación: use el GPS, ingrese coordenadas o toque Buscar alerta real. No se muestra el tiempo hasta entonces.',
-    live:'En vivo desde el servidor ResQ.', none:'No hay alertas activas del NWS en la ubicación del servidor.', cached:'Servidor no disponible. Datos guardados en este dispositivo a las ',
+    live:'En vivo desde el servidor ResQ.', none:'No hay alertas activas del NWS para las ciudades vigiladas.', cached:'Servidor no disponible. Datos guardados en este dispositivo a las ',
     nocache:'Servidor no disponible y no hay datos guardados en este dispositivo.', connecting:'Conectando con el servidor ResQ…',
     hiddenNote:n => `${n} alerta(s) activa(s) ocultas: no provienen del NWS (sin ID verificable).`,
     hazard:'Peligro', level:'Nivel', area:'Zona', expires:'Vence', engine:'Motor', route:'enrutada por', nwsId:'ID de alerta NWS', verify:'verificar en weather.gov',
     immediate:'Haga ahora', avoid:'Evite', prepare:'Prepárese', official:'Instrucción oficial', auto:'Traducción automática', coverage:'cobertura',
-    raised:'Gravedad elevada por ResQ: ', evac:'Se recomienda evacuar', shelter:'Busque refugio', advice:'Consejo de seguridad', picked:'Elegida',
+    raised:'Gravedad elevada por ResQ: ', evac:'Se recomienda evacuar', shelter:'Busque refugio', advice:'Consejo de seguridad', city:'Ciudad',
     weather:'Tiempo NOAA', wind:'Viento', feels:'Sensación', hum:'Humedad', observed:'Observado ', at:' a las ',
     queue:'Flujo', pending:'pendientes', done:'listos', failed:'fallidos', running:'en curso', pendingSync:'por sincronizar', total:'total', jobs:'Últimos 10 trabajos', noJobs:'Aún no hay trabajos.',
-    loc:'Ubicación NOAA', gps:'Usar mi ubicación', manual:'Ingresar coordenadas', lat:'Latitud', lon:'Longitud', save:'Fijar ubicación y consultar NOAA',
-    noGps:'El GPS no está disponible en esta página (requiere HTTPS o localhost). Ingrese coordenadas.', locSet:'Ubicación fijada. Consultando NOAA…', locFail:'No se pudo fijar la ubicación: ',
+    watch:'Lista de vigilancia', zip:'Código postal de Florida', add:'Agregar', remove:'Quitar', empty:'Agregue un código postal para empezar a vigilar una ciudad.', zipLabel:z => `Código ${z}`,
+    count:(n, m) => `${n} de ${m} ciudades`, adding:'Agregando…', addFail:'No se pudo agregar: ', removeFail:'No se pudo quitar: ', polling:'Agregada. Consultando NOAA…',
+    browse:'Explorar Florida', browseLoad:'Ver alertas activas en Florida', browseLoading:'Cargando alertas de Florida desde el NWS…', browseNone:'No hay alertas activas en FL ahora',
+    browseCount:n => `${n} alerta(s) activa(s) en FL (de api.weather.gov)`, addWatch:'Agregar a la lista', noArea:'El NWS no dio una zona utilizable para esta alerta.',
+    severity:'Gravedad',
     notices:'Avisos del operador', noNotices:'No hay avisos activos del operador.', noticeBad:'Archivo local de avisos no disponible o inválido.',
     foot:'Alertas y observaciones: Servicio Meteorológico Nacional de NOAA (api.weather.gov). Siga siempre las instrucciones de las autoridades locales.',
-    nwsFail:'No se pudo contactar api.weather.gov desde este dispositivo: ', noCand:'El NWS no devolvió ninguna alerta terrestre activa con una zona utilizable.',
-    pickedMsg:'Alerta NWS elegida', pollRes:'Consulta del servidor', waiting:'Esperando a que el flujo la procese…', ready:'Procesada. Tarjeta resaltada abajo.',
-    notFound:'No apareció en /v1/alerts/active tras 60 s. Puede que el servidor no la haya recibido para este punto; revise el registro del servidor.',
-    backendFail:'Falló la solicitud al servidor: '}
+    nwsFail:'No se pudo contactar api.weather.gov desde este dispositivo: '}
 };
 const STATUS_ES = {pending:'pendiente', running:'en curso', done:'listo', failed:'fallido'};
 
@@ -226,8 +224,8 @@ try { if (localStorage.getItem(langKey) === 'es') lang = 'es'; } catch {}
 // Everything shown comes from these backend responses (or a saved copy of them).
 const S = {health:null, noaa:null, queue:null, jobs:null, alerts:null, savedAt:null, reachable:null, cached:false};
 let notices = null;
-let pickedId = null;
-let finding = false;
+let browse = null;      // last Florida alerts list from api.weather.gov (features), null until loaded
+let busy = false;       // a watch-list change is in flight
 
 try {
   const c = JSON.parse(localStorage.getItem(cacheKey));
@@ -259,7 +257,11 @@ async function call(path, {method = 'GET', body, ms = 8000} = {}) {
   try {
     const res = await fetch(API + path, {method, cache:'no-store', signal:ctl.signal,
       headers: body ? {'Content-Type':'application/json'} : undefined, body: body ? JSON.stringify(body) : undefined});
-    if (!res.ok) throw new Error(`${method} ${path} → HTTP ${res.status}`);
+    if (!res.ok) {
+      let detail = null;
+      try { detail = (await res.json()).detail; } catch {}
+      throw new Error(typeof detail === 'string' ? detail : `${method} ${path} → HTTP ${res.status}`);
+    }
     return await res.json();
   } finally { clearTimeout(timer); }
 }
@@ -279,7 +281,7 @@ function renderTop() {
     const probe = (h.connectivity?.probes || []).find(p => /(^|\/\/)api\.weather\.gov/.test(String(p.url)));
     net.className = 'chip ' + (!probe ? '' : probe.ok ? 'ok' : 'down');
     setText('net', t.internet + ' · ' + (!probe ? DASH : probe.ok ? t.up : t.unreach));
-    setText('net-sub', probe ? `api.weather.gov · ${isNum(probe.elapsed_ms) ? Math.round(probe.elapsed_ms) + ' ms' : DASH}` : t.noProbe);
+    setText('net-sub', probe ? `${probe.ok ? t.wxUp : t.wxDown} · ${isNum(probe.elapsed_ms) ? Math.round(probe.elapsed_ms) + ' ms' : DASH}` : t.noProbe);
   }
 
   // Swarms = outcome of the backend's last real Swarms call (/v1/health swarm.last_call).
@@ -297,7 +299,7 @@ function renderTop() {
   const nb = S.noaa;
   const chip = $('chip-noaa');
   if (!nb) { chip.className = 'chip'; setText('noaa', t.noaa); setText('noaa-sub', DASH); return; }
-  if (!nb.point) { chip.className = 'chip off'; setText('noaa', t.noaa + ' · ' + t.setLoc); setText('noaa-sub', t.notPolled); return; }
+  if (!(nb.cities || []).length) { chip.className = 'chip off'; setText('noaa', t.noaa + ' · ' + t.noCities); setText('noaa-sub', t.notPolled); return; }
   const last = Date.parse(nb.last_poll_at || '');
   chip.className = 'chip ' + (nb.last_error ? 'down' : Number.isFinite(last) ? 'ok' : '');
   setText('noaa', t.noaa + ' · ' + (nb.last_error ? t.pollFail : Number.isFinite(last) ? t.pollOk + ' ' + clock(nb.last_poll_at) : t.never));
@@ -316,13 +318,14 @@ function card(job) {
   const art = el('article', 'card stack');
   const color = sf.color || cm.severity?.color;
   if (color) art.style.setProperty('--sev', color);
-  if (pickedId && a.id === pickedId) { art.classList.add('picked'); art.id = 'picked-card'; }
 
   const head = el('div', 'card-head');
   const h3 = el('h3', '', pick(cm.title) || a.title || DASH);
-  if (pickedId && a.id === pickedId) h3.append(el('span', 'badge mint', t.picked));
   head.append(h3, el('span', 'pill', pick(sf.tier_label || cm.severity?.label) || c.severity || DASH));
   art.append(head);
+  // Which watched cities this alert covers (backend: /v1/alerts/active item.cities).
+  const cities = (job.cities || []).map(cityName).filter(Boolean);
+  art.append(el('p', 'city-line', `${t.city}: ${cities.length ? cities.join(' · ') : DASH}`));
 
   const dl = el('dl', 'facts');
   fact(dl, t.hazard, pick(c.hazard_label) || c.hazard);
@@ -342,11 +345,13 @@ function card(job) {
   if (sf.evacuation_recommended) art.append(el('p', 'banner', t.evac));
   else if (sf.shelter_recommended) art.append(el('p', 'banner', t.shelter));
   art.append(el('h4', '', t.advice));
-  if (sf.first_action) art.append(el('p', 'first', pick(sf.first_action)));
+  const first = pick(sf.first_action);
+  if (first) art.append(el('p', 'first', first));
   if (sf.advice) art.append(el('p', '', pick(sf.advice)));
   if (c.escalated || (c.conflicts || []).length) art.append(el('p', 'raised', t.raised + (c.conflicts?.[0] || c.rationale || '')));
   for (const phase of ['immediate', 'avoid', 'prepare']) {
-    const items = (sf[phase] || []).map(pick).filter(Boolean);
+    // The headline action is shown above; don't repeat it as a bullet.
+    const items = (sf[phase] || []).map(pick).filter(x => x && x !== first);
     if (!items.length) continue;
     const ul = el('ul'); items.forEach(x => ul.append(el('li', '', x)));
     art.append(el('h4', '', t[phase]), ul);
@@ -386,19 +391,45 @@ function renderAlerts() {
 }
 
 // ------------------------------------------------------------------ side panel
-function renderSide() {
+// City label: NWS name, else "ZIP 33130" until NWS supplies one. Never guessed.
+const cityName = c => c ? (c.name || (c.zip ? T[lang].zipLabel(c.zip) : c.key)) : null;
+
+function wxBlock(c) {
+  const t = T[lang], o = c.observation;
+  const box = el('div', 'wx stack');
+  box.append(el('h3', '', cityName(c)));
+  const row = el('div', 'row');
+  const info = el('div');
+  info.append(el('p', '', o?.text || DASH), el('p', 'muted', o?.station ? (o.station.name || o.station.id) : DASH));
+  info.firstChild.style.fontWeight = '700';
+  row.append(el('span', 'temp', o ? withUnit(o.temperature_f, '°F') : DASH), info);
+  const dl = el('dl', 'facts');
+  fact(dl, t.wind, o ? withUnit(o.wind_mph, ' mph') : DASH);
+  fact(dl, t.feels, o ? withUnit(o.feels_like_f, '°F') : DASH);
+  fact(dl, t.hum, o ? withUnit(o.humidity_pct, '%') : DASH);
+  box.append(row, dl, el('p', 'muted', o?.observed_at ? t.observed + when(o.observed_at) : DASH));
+  return box;
+}
+
+function renderWatch() {
   const t = T[lang], nb = S.noaa;
-  const noLoc = Boolean(nb) && !nb.point;          // backend has no location: show no weather at all
-  const o = noLoc ? null : nb?.observation;
-  setText('wx-place', !nb ? DASH : noLoc ? t.setLoc : (nb.label || `${nb.point.latitude}, ${nb.point.longitude}`));
-  setText('wx-temp', o ? withUnit(o.temperature_f, '°F') : DASH);
-  setText('wx-text', o?.text);
-  setText('wx-station', o?.station ? (o.station.name || o.station.id) : DASH);
-  setText('wx-wind', o ? withUnit(o.wind_mph, ' mph') : DASH);
-  setText('wx-feels', o ? withUnit(o.feels_like_f, '°F') : DASH);
-  setText('wx-hum', o ? withUnit(o.humidity_pct, '%') : DASH);
-  setText('wx-time', noLoc ? t.setLocHelp : o?.observed_at ? t.observed + when(o.observed_at) : DASH);
-  setText('loc-now', noLoc ? t.setLoc : nb?.point ? `${nb.label ? nb.label + ' · ' : ''}${nb.point.latitude}, ${nb.point.longitude}` : DASH);
+  const cities = nb ? (nb.cities || []) : null;
+  $('cities').replaceChildren(...(cities || []).map(c => {
+    const li = el('li');
+    const x = el('button', '', '✕');
+    x.type = 'button'; x.disabled = busy || S.cached;
+    x.setAttribute('aria-label', `${t.remove} ${cityName(c)}`);
+    x.onclick = () => removeCity(c.key);
+    li.append(el('span', '', cityName(c)), x);
+    return li;
+  }));
+  setText('watch-count', !cities ? DASH : cities.length ? t.count(cities.length, nb.max_cities ?? DASH) : t.empty);
+  $('wx').replaceChildren(...(!cities ? [el('p', 'muted', DASH)] : cities.length ? cities.map(wxBlock) : [el('p', 'muted', t.empty)]));
+}
+
+function renderSide() {
+  const t = T[lang];
+  renderWatch();
 
   const q = S.queue;
   setText('q-pending', q ? n0(q.pending) : DASH);
@@ -422,15 +453,14 @@ function renderSide() {
 function renderStatic() {
   const t = T[lang];
   document.documentElement.lang = lang;
-  const map = {'t-sub':'sub','t-pipeline':'pipeline','t-alerts':'alerts','t-weather':'weather','t-wind':'wind','t-feels':'feels','t-hum':'hum',
-    't-queue':'queue','t-pending':'pending','t-done':'done','t-failed':'failed','t-jobs':'jobs','t-loc':'loc','gps':'gps','t-manual':'manual',
-    't-lat':'lat','t-lon':'lon','t-save':'save','t-notices':'notices','t-foot':'foot'};
+  const map = {'t-sub':'sub','t-pipeline':'pipeline','t-alerts':'alerts','t-weather':'weather',
+    't-queue':'queue','t-pending':'pending','t-done':'done','t-failed':'failed','t-jobs':'jobs','t-watch':'watch','t-zip':'zip','t-add':'add',
+    't-browse':'browse','browse-load':'browseLoad','t-notices':'notices','t-foot':'foot'};
   for (const [id, k] of Object.entries(map)) setText(id, t[k]);
-  setText('find', finding ? t.finding : t.find);
   document.querySelectorAll('.lang button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
 }
 
-function renderAll() { renderStatic(); renderTop(); renderAlerts(); renderSide(); renderNotices(); }
+function renderAll() { renderStatic(); renderTop(); renderAlerts(); renderSide(); renderBrowse(); renderNotices(); }
 
 // ------------------------------------------------------------------ backend refresh
 async function refresh() {
@@ -454,10 +484,32 @@ async function refresh() {
   renderAll();
 }
 
-// ------------------------------------------------------------------ find live alert (real NWS)
-const SEV = {Extreme:4, Severe:3, Moderate:2, Minor:1, Unknown:0};
-const LAND = new Set('AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR GU VI AS MP'.split(' '));
-const onLand = f => (f.properties?.geocode?.UGC || []).some(u => LAND.has(String(u).slice(0, 2)));
+// ------------------------------------------------------------------ watch list
+async function addZip(zip) {
+  const t = T[lang];
+  busy = true; renderWatch(); setText('watch-msg', t.adding);
+  try {
+    await call('/v1/watchlist', {method:'POST', body:{zip}, ms:15000});
+    setText('watch-msg', t.polling);
+    await call('/v1/noaa/poll', {method:'POST', ms:60000}).catch(() => null);
+    setText('watch-msg', '');
+    $('zipform').reset();
+  } catch (e) { setText('watch-msg', t.addFail + e.message); }
+  busy = false; refresh();
+}
+async function removeCity(key) {
+  busy = true; renderWatch();
+  try { await call('/v1/watchlist/' + encodeURIComponent(key), {method:'DELETE'}); setText('watch-msg', ''); }
+  catch (e) { setText('watch-msg', T[lang].removeFail + e.message); }
+  busy = false; refresh();
+}
+$('zipform').onsubmit = e => {
+  e.preventDefault();
+  if (busy) return;
+  addZip(e.currentTarget.elements.zip.value.trim());
+};
+
+// ------------------------------------------------------------------ browse Florida (real NWS, fetched in the browser)
 const rings = g => !g ? [] : g.type === 'Polygon' ? [g.coordinates[0]] : g.type === 'MultiPolygon' ? g.coordinates.map(p => p[0])
   : g.type === 'GeometryCollection' ? g.geometries.flatMap(rings) : [];
 function inside([x, y], ring) {
@@ -488,82 +540,51 @@ async function nws(url) {
     return await res.json();
   } finally { clearTimeout(timer); }
 }
-function findMsg(nodes, cls) { const m = $('find-msg'); m.hidden = false; m.className = 'msg ' + (cls || ''); m.replaceChildren(...nodes); }
 
-$('find').onclick = async () => {
-  if (finding) return;
+function renderBrowse() {
   const t = T[lang];
-  finding = true; $('find').disabled = true; renderStatic();
-  findMsg([t.finding]);
-  try {
-    let feed;
-    try { feed = await nws(NWS + '/alerts/active?status=actual'); }
-    catch (e) { findMsg([t.nwsFail + e.message], 'err'); return; }
-    const cands = (feed.features || [])
-      .filter(f => f.properties?.id && f.properties.messageType !== 'Cancel' && onLand(f))
-      .sort((a, b) => (b.geometry ? 1 : 0) - (a.geometry ? 1 : 0) || (SEV[b.properties.severity] ?? 0) - (SEV[a.properties.severity] ?? 0));
-    let chosen = null, point = null;
-    for (const f of cands.slice(0, 8)) {
-      let geom = f.geometry;
-      if (!geom && f.properties.affectedZones?.[0]) { try { geom = (await nws(f.properties.affectedZones[0])).geometry; } catch {} }
-      point = interiorPoint(geom);
-      if (point) { chosen = f; break; }
-    }
-    if (!chosen) { findMsg([t.noCand], 'err'); return; }
-    const p = chosen.properties;
-    pickedId = p.id;
-    const link = el('a', '', p.id); link.href = nwsLink(p.id); link.target = '_blank'; link.rel = 'noopener noreferrer';
-    const head = () => [el('b', '', `${t.pickedMsg}: ${p.event || DASH}`), el('br'), link, el('br'),
-      el('span', 'muted', `${p.areaDesc || DASH} · ${point.latitude}, ${point.longitude}`), el('br')];
-    findMsg([...head(), t.waiting]);
-
-    let poll;
-    try {
-      await call('/v1/noaa/location', {method:'POST', body:{latitude:point.latitude, longitude:point.longitude, label:(p.areaDesc || '').slice(0, 60) || null}});
-      poll = await call('/v1/noaa/poll', {method:'POST', ms:30000});
-    } catch (e) { findMsg([...head(), t.backendFail + e.message], 'err'); return; }
-    const pollLine = `${t.pollRes}: ${poll.status}${poll.status === 'ok' ? ` · active ${n0(poll.active)} · new ${n0(poll.new)}` : poll.reason || poll.error ? ' · ' + (poll.reason || poll.error) : ''}`;
-    findMsg([...head(), pollLine, el('br'), t.waiting], poll.status === 'ok' ? '' : 'err');
-    if (poll.status !== 'ok') return;
-
-    const deadline = Date.now() + 60000;
-    while (Date.now() < deadline) {
-      await refresh();
-      if ((S.alerts || []).some(j => j.result?.alert?.id === pickedId)) {
-        findMsg([...head(), pollLine, el('br'), t.ready], 'ok');
-        $('picked-card')?.scrollIntoView({behavior:'smooth', block:'start'});
-        return;
-      }
-      await new Promise(r => setTimeout(r, 2000));
-    }
-    findMsg([...head(), pollLine, el('br'), t.notFound], 'err');
-  } finally {
-    finding = false; $('find').disabled = false; renderStatic();
-  }
-};
-
-// ------------------------------------------------------------------ location
-async function setLocation(latitude, longitude) {
-  const t = T[lang];
-  setText('loc-msg', t.locSet);
-  try {
-    await call('/v1/noaa/location', {method:'POST', body:{latitude, longitude}});
-    await call('/v1/noaa/poll', {method:'POST', ms:30000});
-    setText('loc-msg', '');
-  } catch (e) { setText('loc-msg', t.locFail + e.message); }
-  refresh();
+  if (!browse) { $('browse').replaceChildren(); return; }
+  if (!browse.length) { setText('browse-msg', t.browseNone); $('browse').replaceChildren(); return; }
+  setText('browse-msg', t.browseCount(browse.length));
+  const full = (S.noaa?.cities || []).length >= (S.noaa?.max_cities ?? Infinity);
+  $('browse').replaceChildren(...browse.map(f => {
+    const p = f.properties, li = el('li');
+    const info = el('div');
+    info.append(el('b', '', p.event || DASH), el('br'),
+      el('span', 'muted', `${t.severity}: ${p.severity || DASH} · ${t.expires}: ${when(p.ends || p.expires)}`), el('br'),
+      el('span', '', p.areaDesc || DASH));
+    const btn = el('button', '', t.addWatch);
+    btn.type = 'button'; btn.disabled = busy || full || S.cached;
+    btn.onclick = () => addAlertArea(f, btn);
+    li.append(info, btn);
+    return li;
+  }));
 }
-$('manual').onsubmit = e => {
-  e.preventDefault();
-  const f = e.currentTarget.elements;
-  const lat = f.latitude.valueAsNumber, lon = f.longitude.valueAsNumber;
-  if (Number.isFinite(lat) && Number.isFinite(lon)) setLocation(lat, lon);
+$('browse-load').onclick = async () => {
+  const t = T[lang], b = $('browse-load');
+  b.disabled = true; setText('browse-msg', t.browseLoading);
+  try {
+    const feed = await nws(NWS + '/alerts/active?area=FL');
+    browse = (feed.features || []).filter(f => f.properties?.id && f.properties.messageType !== 'Cancel');
+    renderBrowse();
+  } catch (e) { browse = null; setText('browse-msg', t.nwsFail + e.message); renderBrowse(); }
+  b.disabled = false;
 };
-$('gps').onclick = () => {
-  if (!window.isSecureContext || !navigator.geolocation) { setText('loc-msg', T[lang].noGps); return; }
-  navigator.geolocation.getCurrentPosition(pos => setLocation(+pos.coords.latitude.toFixed(4), +pos.coords.longitude.toFixed(4)),
-    err => setText('loc-msg', T[lang].locFail + err.message), {timeout:10000, maximumAge:0});
-};
+async function addAlertArea(f, btn) {
+  const t = T[lang], p = f.properties;
+  btn.disabled = true; busy = true;
+  try {
+    let geom = f.geometry;
+    if (!geom && p.affectedZones?.[0]) { try { geom = (await nws(p.affectedZones[0])).geometry; } catch {} }
+    const point = interiorPoint(geom);
+    if (!point) { setText('watch-msg', t.noArea); return; }
+    await call('/v1/watchlist/point', {method:'POST', body:{...point, name:(p.areaDesc || '').slice(0, 80)}});
+    setText('watch-msg', t.polling);
+    await call('/v1/noaa/poll', {method:'POST', ms:60000}).catch(() => null);
+    setText('watch-msg', '');
+  } catch (e) { setText('watch-msg', t.addFail + e.message); }
+  finally { busy = false; refresh(); }
+}
 
 // ------------------------------------------------------------------ operator notices (alerts.json next to this page)
 const validNotice = n => n && typeof n.title === 'string' && n.title.trim() && typeof n.message === 'string' && n.message.trim() &&
@@ -597,7 +618,7 @@ document.querySelectorAll('.lang button').forEach(b => b.onclick = () => {
 renderAll();
 refresh();
 checkNotices();
-setInterval(() => { if (!finding) refresh(); }, 10000);
+setInterval(() => { if (!busy) refresh(); }, 10000);
 setInterval(renderTop, 1000);
 setInterval(checkNotices, 30000);
 </script>

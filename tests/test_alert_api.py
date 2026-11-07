@@ -96,7 +96,7 @@ def test_spanish_only_request_still_returns_english_for_the_operator(client) -> 
 def test_active_alerts_lists_processed_alerts_and_drops_expired(client) -> None:
     live = submit(client, {"event": "Flash Flood Warning", "areaDesc": "Travis County",
                            "expires": "2099-01-01T00:00:00Z"})
-    expired = submit(client, {"event": "Heat Advisory", "areaDesc": "Maricopa County",
+    expired = submit(client, {"event": "Heat Advisory", "areaDesc": "Miami-Dade County",
                               "expires": "2000-01-01T00:00:00Z"})
 
     body = client.get("/v1/alerts/active").json()

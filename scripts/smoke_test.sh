@@ -95,5 +95,25 @@ EOF
   fi
 fi
 
+# 6. Watch list: add a Florida ZIP, see it in GET /v1/watchlist, remove it.
+#    Uses a ZIP not already on the list so it never removes one of yours.
+curl -sS -m 10 -o "$TMP/wl0.json" "$BASE/v1/watchlist"
+ZIP=$($PY -c "import json,sys; have={c.get('zip') for c in json.load(open(sys.argv[1]))['cities']}; print(next(z for z in ('32801','33602','32301','33901','32202','33130') if z not in have))" "$TMP/wl0.json" 2>/dev/null)
+add=$(curl -sS -m 20 -o "$TMP/wl1.json" -w '%{http_code}' -X POST "$BASE/v1/watchlist" -H 'Content-Type: application/json' -d "{\"zip\":\"$ZIP\"}")
+if [ "$add" != 201 ]; then
+  fail "watch list add/list/remove" "POST /v1/watchlist {zip:$ZIP} -> HTTP $add: $(head -c 200 "$TMP/wl1.json")"
+else
+  curl -sS -m 10 -o "$TMP/wl2.json" "$BASE/v1/watchlist"
+  listed=$($PY -c "import json,sys; print(any(c.get('zip')==sys.argv[2] for c in json.load(open(sys.argv[1]))['cities']))" "$TMP/wl2.json" "$ZIP")
+  name=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['city'].get('name'))" "$TMP/wl1.json")
+  del=$(curl -sS -m 10 -o "$TMP/wl3.json" -w '%{http_code}' -X DELETE "$BASE/v1/watchlist/$ZIP")
+  gone=$($PY -c "import json,sys; print(not any(c.get('zip')==sys.argv[2] for c in json.load(open(sys.argv[1]))['cities']))" "$TMP/wl3.json" "$ZIP")
+  if [ "$listed" = True ] && [ "$del" = 200 ] && [ "$gone" = True ]; then
+    pass "watch list add/list/remove (zip=$ZIP name=$name)"
+  else
+    fail "watch list add/list/remove" "zip=$ZIP listed=$listed delete=HTTP $del gone=$gone"
+  fi
+fi
+
 echo "RESULT: $FAILS failed"
 exit $FAILS

@@ -6,7 +6,7 @@ Copy **index.html** and **alerts.json** into the existing `~/resq` folder on the
 
 From the folder containing `index.html` and `alerts.json`, run `python -m http.server 8080 --bind 127.0.0.1` and open [http://localhost:8080](http://localhost:8080). Use `python3` if that is the command installed on your computer.
 
-- `index.html` contains the markup, styles, and browser logic. Everything it shows comes from the ResQ backend (`/v1/health`, `/v1/noaa`, `/v1/alerts/active`, `/v1/queue/summary`, `/v1/jobs`), plus api.weather.gov for **Find live alert** and the local `alerts.json` notices. When the page is served on :8080 it calls the backend on :8000 of the same host.
+- `index.html` contains the markup, styles, and browser logic. Everything it shows comes from the ResQ backend (`/v1/health`, `/v1/noaa`, `/v1/alerts/active`, `/v1/queue/summary`, `/v1/jobs`), plus api.weather.gov for **Browse Florida** and the local `alerts.json` notices. When the page is served on :8080 it calls the backend on :8000 of the same host.
 - `alerts.json` is the static local notice feed. See the notice format below before replacing it with an app integration.
 - When changing the app, test both localhost and the Arduino's HTTP hotspot address. Localhost can support geolocation with permission even when GPS is blocked on the hotspot address. Cached readings and saved locations are separate for each address.
 
@@ -37,8 +37,8 @@ From the folder containing `index.html` and `alerts.json`, run `python -m http.s
 ## Try the dashboard
 
 - **Statuses.** The top bar shows three separate statuses from the backend: **Internet** (the board can reach api.weather.gov), **Swarms** (last Swarms call ok/failed and its time in ms) and **NOAA** (last poll ok/failed, countdown to the next one).
-- **Location.** There is no default location. Until one is set, the NOAA panel shows **Set location** and no weather. Set it with **Use my location** (browser GPS, only in a secure context such as localhost; the Arduino's plain HTTP address generally blocks it), by entering coordinates, by tapping **Find live alert**, or with `NOAA_LAT`/`NOAA_LON` on the backend.
-- **Find live alert.** Fetches active alerts from api.weather.gov in the browser (the viewing device needs internet), picks one, moves the backend's NOAA point inside its area and polls. The card shows the NWS alert ID and links to it on api.weather.gov.
+- **Watch list.** Up to 5 Florida cities, starting empty ("Add a ZIP code to start watching a city."). Add a Florida ZIP (looked up offline in the Census ZCTA file; the city name comes from NWS, shown as "ZIP 33130" until known) or remove one with ✕. Each alert card has a **City:** line, and an alert covering two watched cities is one card listing both. The weather panel shows one block per city.
+- **Browse Florida.** Lists active NWS alerts for Florida (fetched in the browser, so the viewing device needs internet). **Add to watch list** adds a point inside that alert's area, named with its area description. Cards link to the alert's NWS record on api.weather.gov.
 - **Who wrote it.** Each card says whether Swarms AI or local rules wrote it, per pipeline stage.
 - **Offline.** The last backend answers are saved in this browser and shown, with their time, when the backend cannot be reached. Missing values are shown as "—".
 

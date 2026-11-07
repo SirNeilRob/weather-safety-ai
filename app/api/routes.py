@@ -27,6 +27,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..core.db import FAILED, PENDING, RUNNING, STATUSES, Job
+from ..core.noaa import WatchlistError
 from ..knowledge.hazards import HAZARDS, PRODUCT_TYPES, SEVERITY_LABELS
 
 router = APIRouter(prefix="/v1")
@@ -88,10 +89,14 @@ class OfflineToggle(BaseModel):
     enabled: bool
 
 
-class LocationRequest(BaseModel):
+class WatchZipRequest(BaseModel):
+    zip: str
+
+
+class WatchPointRequest(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
-    label: str | None = None
+    name: str
 
 
 # ---------------------------------------------------------------------- helpers
@@ -205,8 +210,15 @@ async def active_alerts(
             return True
         return noaa.is_current(((job.payload or {}).get("alert") or {}).get("identifier"))
 
+    def with_cities(job: Job) -> dict:
+        # Which watched cities this alert covers (one card, every city listed).
+        item = JobResponse.from_job(job).model_dump()
+        identifier = ((job.payload or {}).get("alert") or {}).get("identifier")
+        item["cities"] = noaa.cities_for(identifier) if noaa is not None else []
+        return item
+
     alerts = [
-        JobResponse.from_job(job)
+        with_cities(job)
         for job in jobs
         if job.kind == ALERT_KIND
         and job.result
@@ -225,16 +237,44 @@ def _noaa(request: Request):
 
 @router.get("/noaa")
 async def noaa_status(request: Request) -> dict:
-    """Location, last poll, active NOAA alert count and the latest observation."""
+    """Watch list, last poll, active NOAA alert count and one observation per city."""
     return _noaa(request).snapshot()
 
 
-@router.post("/noaa/location")
-async def noaa_location(body: LocationRequest, request: Request) -> dict:
-    """Set the place NOAA alerts and conditions are fetched for, then poll."""
+@router.get("/watchlist")
+async def watchlist(request: Request) -> dict:
     feed = _noaa(request)
-    moved = feed.set_point(body.latitude, body.longitude, body.label)
-    return {"ok": True, "moved": moved, **feed.snapshot()}
+    return {"cities": feed.watchlist(), "max_cities": feed.max_cities}
+
+
+@router.post("/watchlist", status_code=201)
+async def watchlist_add_zip(body: WatchZipRequest, request: Request) -> dict:
+    """Add a Florida ZIP (Census ZCTA lookup, city name from NWS /points)."""
+    feed = _noaa(request)
+    try:
+        city = await feed.add_zip(body.zip)
+    except WatchlistError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    return {"city": city, "cities": feed.watchlist()}
+
+
+@router.post("/watchlist/point", status_code=201)
+async def watchlist_add_point(body: WatchPointRequest, request: Request) -> dict:
+    """Add a point inside an NWS alert area (Browse Florida); named by its areaDesc."""
+    feed = _noaa(request)
+    try:
+        city = feed.add_point(body.latitude, body.longitude, body.name)
+    except WatchlistError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    return {"city": city, "cities": feed.watchlist()}
+
+
+@router.delete("/watchlist/{key}")
+async def watchlist_remove(key: str, request: Request) -> dict:
+    feed = _noaa(request)
+    if not feed.remove(key):
+        raise HTTPException(status_code=404, detail=f"{key} is not on the watch list")
+    return {"ok": True, "cities": feed.watchlist()}
 
 
 @router.post("/noaa/poll")
@@ -294,7 +334,8 @@ async def health(request: Request) -> dict:
         },
         "queue": stats,
         "noaa": (
-            {k: v for k, v in ctx.noaa.snapshot().items() if k != "observation"}
+            {k: v for k, v in ctx.noaa.snapshot().items() if k != "cities"}
+            | {"cities": len(ctx.noaa.cities)}
             if ctx.noaa is not None
             else {"enabled": False}
         ),

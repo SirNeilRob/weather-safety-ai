@@ -65,7 +65,7 @@ nothing in those shapes without telling the other side.
 | Minute | On screen | Who |
 |---|---|---|
 | 0:00–0:30 | problem: warnings die with the network | #4 or #5 |
-| 0:30–1:15 | Find live alert (real NWS alert), show trace + EN/ES SMS | #3 drives, #2 narrates |
+| 0:30–1:15 | Add a Florida ZIP / Browse Florida (real NWS alert), show trace + EN/ES SMS | #3 drives, #2 narrates |
 | 1:15–1:50 | pull Wi-Fi, re-submit, identical classification, `pipeline_engine: local` | #4 pulls the plug |
 | 1:50–2:20 | queue + sync catches up when back online | #2 |
 | 2:20–2:45 | Swarm agent chain (model drafts copy, safety stays local) | #1 |

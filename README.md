@@ -93,8 +93,8 @@ stages, not from whether the device happened to be online.
 
 ### Live data only
 
-Alerts come from the NOAA/NWS feed (`/v1/noaa`, polled for the configured
-location) or from `POST /v1/alerts`. Nothing canned is served. The hand-written
+Alerts come from the NOAA/NWS feed (`/v1/noaa`, polled for each city on the
+watch list, up to 5 Florida cities) or from `POST /v1/alerts`. Nothing canned is served. The hand-written
 CAP alerts used to test classification live in `tests/fixtures/samples.py` and
 are never imported by `app/`.
 
@@ -113,8 +113,11 @@ are never imported by `app/`.
 | `GET` | `/v1/queue/summary` | queue + sync counters for the status badge |
 | `GET` | `/v1/capabilities` | what the UI may show as available |
 | `GET` | `/v1/alerts/active` | processed alerts to display (NOAA ones only while NWS still lists them) |
-| `GET` | `/v1/noaa` | NOAA location, last poll, active count, latest observation |
-| `POST` | `/v1/noaa/location` | set the NOAA point (`latitude`, `longitude`, `label`) |
+| `GET` | `/v1/noaa` | watch list with one observation per city, last poll, active count |
+| `GET` | `/v1/watchlist` | watched cities (max 5, Florida only for now) |
+| `POST` | `/v1/watchlist` | add a Florida ZIP (`{"zip": "33130"}`) |
+| `POST` | `/v1/watchlist/point` | add a point inside an NWS alert area (`latitude`, `longitude`, `name`) |
+| `DELETE` | `/v1/watchlist/{key}` | remove a city (ZIP or `fl1`…) |
 | `POST` | `/v1/noaa/poll` | poll NOAA now |
 | `POST` | `/v1/demo/offline` | force offline on/off (endpoint name kept for compatibility) |
 | `POST` | `/v1/sync/run` | force one reconciliation pass |
@@ -258,9 +261,9 @@ docs/                  frontend contract, Swarm agent prompts, team split
 
 1. `GET /v1/health` → `connectivity.probes` shows whether api.weather.gov is
    reachable; `swarm.last_call` shows the last Swarms call (ok/failed, ms).
-2. On the dashboard tap **Find live alert**: it picks an active NWS alert,
-   sets the NOAA point inside its area and polls. The card shows the NWS alert
-   ID with a link to api.weather.gov.
+2. On the dashboard add a Florida ZIP (e.g. 33130) to the watch list, or use
+   **Browse Florida** → **Add to watch list** on a live NWS alert. Each card
+   shows its City, the NWS alert ID and a link to api.weather.gov.
 3. Point at the card's "Written by" line: Swarms AI for the message text when
    online, local rules for classification and safety.
 4. `POST /v1/demo/offline {"enabled": true}` → health flips to `offline`; new

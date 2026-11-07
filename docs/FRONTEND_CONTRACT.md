@@ -17,13 +17,16 @@ severity, a colour, and at least one instruction in both languages.
 | --- | --- | --- |
 | `GET` | `/v1/health` | Online/offline state, engine in use, queue counts |
 | `POST` | `/v1/alerts` | Submit one raw alert, get classification + safety + messages |
-| `GET` | `/v1/alerts/active` | Processed alerts to display, newest first (NOAA ones only while NWS still lists them) |
+| `GET` | `/v1/alerts/active` | Processed alerts to display, newest first (NOAA ones only while NWS lists them for a watched city). Each item adds `cities: [{key, zip, name}]` |
 | `GET` | `/v1/hazards` | Hazard legend, severity levels + colours, languages |
 | `GET` | `/v1/jobs/{id}` | Fetch a job later (same shape as the POST response) |
 | `GET` | `/v1/queue/summary` | Durable counts, including `pending_sync` |
 | `GET` | `/v1/jobs?limit=10` | Most recent jobs |
-| `GET` | `/v1/noaa` | NOAA point (`null` until a location is set), `last_poll_at`, `last_error`, `interval_seconds`, `observation` |
-| `POST` | `/v1/noaa/location` | `{latitude, longitude, label?}` sets the NOAA point |
+| `GET` | `/v1/noaa` | `cities` (watch list, each with its `observation`), `max_cities`, `last_poll_at`, `last_error`, `interval_seconds` |
+| `GET` | `/v1/watchlist` | `{cities: [{key, zip, lat, lon, name, added_at, active_alerts, polled, last_poll_at, last_error, observation}], max_cities}` |
+| `POST` | `/v1/watchlist` | `{zip}` → 201 `{city, cities}`. Errors (`detail`): 422 "ZIP must be 5 digits", 422 "Florida ZIPs only for now", 404 "ZIP not found", 409 "Max 5 cities", 409 already on the list |
+| `POST` | `/v1/watchlist/point` | `{latitude, longitude, name}` → 201 `{city, cities}`; key is a short id (`fl1`…). Used by Browse Florida; `name` is the alert's `areaDesc` |
+| `DELETE` | `/v1/watchlist/{key}` | Remove a city (`key` = the ZIP, or `fl1`… for Browse Florida points) → `{ok, cities}`; 404 if absent |
 | `POST` | `/v1/noaa/poll` | Poll NOAA now → `{status: ok|skipped|error, …}` |
 | `POST` | `/v1/demo/offline` | `{"enabled": true}` forces offline (endpoint name kept for compatibility) |
 | `POST` | `/v1/sync/run` | Trigger a reconciliation pass by hand |
@@ -237,13 +240,16 @@ async function legend() {
    `connectivity.probes` entry for api.weather.gov in `GET /v1/health`;
    **Swarms** = `swarm.last_call` (`ok`, `ms`, `at`, `error`); **NOAA** =
    `GET /v1/noaa` `last_poll_at` / `last_error`.
-2. If `GET /v1/noaa` → `point` is `null`, show "Set location" and no weather.
-   Location comes from browser GPS, "Find live alert", or `NOAA_LAT`/`NOAA_LON`.
-3. "Find live alert": read `https://api.weather.gov/alerts/active?status=actual`,
-   pick one active alert, `POST /v1/noaa/location` with a point inside its area,
-   then `POST /v1/noaa/poll`. Show the NWS alert id and link to
-   `https://api.weather.gov/alerts/{id}`.
-4. Render `GET /v1/alerts/active`: severity pill, the three action groups,
-   `first_action`, and who wrote it (`result.pipeline_engine` plus each
-   `trace[].engine`).
+2. Watch list (`GET /v1/watchlist`, max 5, Florida only for now). Empty: show
+   "Add a ZIP code to start watching a city." and no weather. A city with
+   `name: null` is shown as "ZIP 33130" until NWS supplies a name.
+3. Browse Florida: read `https://api.weather.gov/alerts/active?area=FL`, list
+   event, severity, area, expires. "Add to watch list" posts a point inside the
+   alert's area to `POST /v1/watchlist/point` with `name` = `areaDesc`.
+   0 alerts: "No active alerts in FL right now".
+4. Render `GET /v1/alerts/active`: severity pill, "City:" from `cities`, the
+   three action groups, `first_action`, who wrote it (`result.pipeline_engine`
+   plus each `trace[].engine`), the NWS alert id and a link to
+   `https://api.weather.gov/alerts/{id}`. Weather: one block per city from its
+   `observation`.
 5. Any value missing from a response is shown as "—", never a default.

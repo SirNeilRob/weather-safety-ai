@@ -86,9 +86,6 @@ class AppContext:
         )
         self.noaa = None
         if settings.noaa_enabled:
-            default_point = None
-            if settings.noaa_latitude is not None and settings.noaa_longitude is not None:
-                default_point = (settings.noaa_latitude, settings.noaa_longitude)
             self.noaa = NoaaFeed(
                 store=self.store,
                 monitor=self.monitor,
@@ -96,7 +93,7 @@ class AppContext:
                 state_path=Path(settings.db_path).parent / "noaa_state.json",
                 user_agent=settings.noaa_user_agent,
                 interval=settings.noaa_poll_interval,
-                default_point=default_point,
+                max_cities=settings.watchlist_max,
             )
         self.started = False
 
