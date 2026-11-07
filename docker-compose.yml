@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DB_PATH: /data/sharkbyte.db
+      # Point at the real Swarm API in production; the stub is the default so
+      # `docker compose up` works with no internet and no keys.
+      SWARM_BASE_URL: http://swarm-stub:8899
+      SWARM_SYNC_ENDPOINT: /v1/sync/ingest
+      PROBE_URLS: http://swarm-stub:8899/v1/health
+      PROBE_INTERVAL: "5"
+      OFFLINE_AFTER_FAILURES: "2"
+      WORKER_COUNT: "2"
+    volumes:
+      - sharkbyte-data:/data
+    depends_on:
+      - swarm-stub
+
+  swarm-stub:
+    build: .
+    command: ["uvicorn", "scripts.fake_swarm:app", "--host", "0.0.0.0", "--port", "8899"]
+    ports:
+      - "8899:8899"
+
+volumes:
+  sharkbyte-data:
