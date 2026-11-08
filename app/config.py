@@ -102,6 +102,17 @@ class Settings:
     #: Hard cap on how long an alert waits for Swarm-written copy before the
     #: local composer is used instead.
     alert_cloud_timeout: float = 25.0
+    #: "single" = one Swarm agent writes the copy; "moa" = Mixture of Agents
+    #: (EN writer + ES writer + fact checker in parallel, then an editor).
+    swarm_strategy: str = "single"
+    #: MoA only for alerts at or above this severity; lower ones use one agent.
+    swarm_moa_min_severity: str = "moderate"
+    #: Optional stronger model for the MoA editor (aggregator).
+    swarm_moa_aggregator_model: str | None = None
+    #: Measured live: MoA takes ~15-20s (parallel experts, then the editor) vs
+    #: ~5s for one agent. Pair with ALERT_CLOUD_TIMEOUT >= this + 8s so a
+    #: single-agent retry still fits after a failed MoA.
+    swarm_moa_timeout: float = 30.0
 
     # --- NOAA / National Weather Service -----------------------------------
     noaa_enabled: bool = True
@@ -170,6 +181,12 @@ class Settings:
             ollama_timeout=_number("OLLAMA_TIMEOUT", cls.ollama_timeout),
             alert_cloud_stages=_csv("ALERT_CLOUD_STAGES", cls.alert_cloud_stages),
             alert_cloud_timeout=_number("ALERT_CLOUD_TIMEOUT", cls.alert_cloud_timeout),
+            swarm_strategy=os.getenv("SWARM_STRATEGY", cls.swarm_strategy).strip().lower(),
+            swarm_moa_min_severity=os.getenv(
+                "SWARM_MOA_MIN_SEVERITY", cls.swarm_moa_min_severity
+            ).strip().lower(),
+            swarm_moa_aggregator_model=os.getenv("SWARM_MOA_AGGREGATOR_MODEL") or None,
+            swarm_moa_timeout=_number("SWARM_MOA_TIMEOUT", cls.swarm_moa_timeout),
             noaa_enabled=_flag("NOAA_ENABLED", cls.noaa_enabled),
             watchlist_max=int(_number("WATCHLIST_MAX", cls.watchlist_max)),
             noaa_poll_interval=_number("NOAA_POLL_INTERVAL", cls.noaa_poll_interval),

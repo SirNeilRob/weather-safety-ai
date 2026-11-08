@@ -107,11 +107,17 @@ class AlertPipeline:
         # it supplies the curated titles the cloud copy must keep.
         local_messages = self.communication.run(alert, classification, safety_plan)
         messages = None
+        cloud_meta: dict[str, Any] = {}
 
         if self.cloud is not None:
-            messages = await self.cloud.compose(
-                alert, classification, safety_plan, local=local_messages
-            )
+            if hasattr(self.cloud, "compose_with_meta"):
+                messages, cloud_meta = await self.cloud.compose_with_meta(
+                    alert, classification, safety_plan, local=local_messages
+                )
+            else:
+                messages = await self.cloud.compose(
+                    alert, classification, safety_plan, local=local_messages
+                )
             if messages is not None:
                 engine = "swarm"
 
@@ -133,14 +139,23 @@ class AlertPipeline:
             detail={
                 "channels": ["sms", "push", "bulletin", "voice"],
                 "languages": state.languages,
+                **({"cloud": cloud_meta} if cloud_meta else {}),
             },
         )
 
         if engine == "swarm":
             # Cloud-authored copy still needs the deterministic safety block to
             # stay authoritative; note it so the UI is not ambiguous.
+            drafted_by = (
+                "a Swarm Mixture of Agents ("
+                + ", ".join(cloud_meta.get("experts", []))
+                + f" -> {cloud_meta.get('aggregator')})"
+                if cloud_meta.get("strategy") == "moa"
+                else "Swarm"
+            )
             state.warnings.append(
-                "communication copy was drafted by Swarm; safety actions remain locally generated"
+                f"communication copy was drafted by {drafted_by}; "
+                "safety actions remain locally generated"
             )
 
         return {

@@ -20,9 +20,12 @@ import logging
 import time
 from typing import Any
 
-from .communication import severity_block, sms_meta
+from .communication import severity_block, sms_meta, to_gsm7
 
 logger = logging.getLogger(__name__)
+
+STRATEGIES = ("single", "moa")
+SEVERITY_RANK = {"unknown": 0, "minor": 1, "moderate": 2, "severe": 3, "extreme": 4}
 
 REQUIRED_CHANNELS = ("sms", "push", "bulletin", "voice")
 REQUIRED_LANGUAGES = ("en", "es")
@@ -96,6 +99,10 @@ def finish(payload: dict, severity: str, local: dict | None = None) -> dict | No
                 MAX_SMS_CHARS,
             )
             return None
+        # Model prose goes through the same typography fold as the local
+        # composer: an em dash from the model must not turn a 150-character
+        # message into two carrier segments.
+        text = to_gsm7(text)
         sms[language] = {"text": text, **sms_meta(text)}
 
     for channel in ("bulletin", "voice"):
@@ -137,6 +144,9 @@ class CloudDrafter:
         timeout: float = 15.0,
         cooldown: float = 30.0,
         clock=time.monotonic,
+        strategy: str = "single",
+        moa_min_severity: str = "minor",
+        moa_timeout: float | None = None,
     ) -> None:
         self.swarm = swarm
         self.monitor = monitor
@@ -146,6 +156,12 @@ class CloudDrafter:
         self._clock = clock
         self._skip_until = 0.0
         self.last_error: str | None = None
+        self.strategy = strategy if strategy in STRATEGIES else "single"
+        self.moa_min_severity = moa_min_severity if moa_min_severity in SEVERITY_RANK else "minor"
+        # MoA is two model hops (experts, then editor); leave room inside the
+        # stage budget for a single-agent retry if it fails.
+        self.moa_timeout = float(moa_timeout) if moa_timeout else max(5.0, self.timeout * 0.7)
+        self.last_moa_error: str | None = None
 
     def enabled(self, stage: str) -> bool:
         if stage not in self.stages:
@@ -161,48 +177,103 @@ class CloudDrafter:
         self._skip_until = self._clock() + self.cooldown
         logger.warning("cloud communication stage unavailable: %s", reason)
 
-    async def compose(
-        self, alert, classification: dict, safety: dict, local: dict | None = None
-    ) -> dict | None:
-        if not self.enabled("communication"):
-            return None
-        try:
-            payload = await asyncio.wait_for(
-                self.swarm.draft_communication(
-                    alert=alert.to_dict(),
-                    classification=classification,
-                    safety=safety,
-                    official_title=(local or {}).get("title"),
-                ),
-                timeout=self.timeout,
-            )
-        except (asyncio.TimeoutError, TimeoutError):
-            self._failed(f"no answer within {self.timeout:.0f}s")
-            return None
-        except Exception as exc:
-            self._failed(f"{type(exc).__name__}: {exc}")
-            return None
+    def use_moa(self, classification: dict) -> bool:
+        """MoA costs ~4 model calls; spend it where the stakes justify it."""
+        if self.strategy != "moa" or not hasattr(self.swarm, "draft_communication_moa"):
+            return False
+        severity = str(classification.get("severity", "unknown"))
+        return SEVERITY_RANK.get(severity, 0) >= SEVERITY_RANK[self.moa_min_severity]
 
+    def _accept(self, payload: Any, classification: dict, local: dict | None, source: str) -> dict | None:
+        """Every cloud draft, single or MoA, passes the same gate."""
         if not _valid(payload):
-            logger.warning("cloud communication stage returned an invalid shape; using local")
+            logger.warning("cloud %s returned an invalid shape; rejected", source)
             return None
-
         word = wrong_product_term(payload, classification.get("product"))
         if word:
             logger.warning(
-                "cloud Spanish copy used %r for a %s; using local",
+                "cloud %s Spanish copy used %r for a %s; rejected",
+                source,
                 word,
                 classification.get("product"),
             )
             return None
-
-        self.last_error = None
         return finish(payload, str(classification.get("severity", "unknown")), local)
+
+    async def compose(
+        self, alert, classification: dict, safety: dict, local: dict | None = None
+    ) -> dict | None:
+        messages, _meta = await self.compose_with_meta(alert, classification, safety, local)
+        return messages
+
+    async def compose_with_meta(
+        self, alert, classification: dict, safety: dict, local: dict | None = None
+    ) -> tuple[dict | None, dict]:
+        """Fallback chain: MoA -> single agent -> (caller uses) local composer.
+
+        Returns ``(messages, meta)``; ``meta`` says which strategy produced the
+        copy and why a richer one was skipped, for the dashboard trace.
+        """
+        if not self.enabled("communication"):
+            return None, {}
+        kwargs = dict(
+            alert=alert.to_dict(),
+            classification=classification,
+            safety=safety,
+            official_title=(local or {}).get("title"),
+        )
+        started = self._clock()
+        meta: dict[str, Any] = {}
+
+        if self.use_moa(classification):
+            try:
+                payload, moa_meta = await asyncio.wait_for(
+                    self.swarm.draft_communication_moa(**kwargs, timeout=self.moa_timeout),
+                    timeout=self.moa_timeout,
+                )
+                accepted = self._accept(payload, classification, local, "MoA")
+                if accepted is not None:
+                    self.last_error = self.last_moa_error = None
+                    return accepted, moa_meta
+                self.last_moa_error = "editor output failed validation"
+            except (asyncio.TimeoutError, TimeoutError):
+                self.last_moa_error = f"no answer within {self.moa_timeout:.0f}s"
+            except Exception as exc:
+                self.last_moa_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("MoA communication failed (%s); trying single agent", self.last_moa_error)
+            meta["moa_fallback"] = self.last_moa_error
+        elif self.strategy == "moa":
+            meta["moa_skipped"] = f"severity below {self.moa_min_severity}"
+
+        remaining = self.timeout - (self._clock() - started)
+        if remaining < 3.0:
+            self._failed("stage budget spent on MoA")
+            return None, meta
+        try:
+            payload = await asyncio.wait_for(
+                self.swarm.draft_communication(**kwargs), timeout=remaining
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            self._failed(f"no answer within {remaining:.0f}s")
+            return None, meta
+        except Exception as exc:
+            self._failed(f"{type(exc).__name__}: {exc}")
+            return None, meta
+
+        accepted = self._accept(payload, classification, local, "single-agent")
+        if accepted is None:
+            return None, meta
+        self.last_error = None
+        return accepted, {"strategy": "single", **meta}
 
     def snapshot(self) -> dict:
         return {
             "stages": sorted(self.stages),
+            "strategy": self.strategy,
+            "moa_min_severity": self.moa_min_severity if self.strategy == "moa" else None,
             "timeout_seconds": self.timeout,
+            "moa_timeout_seconds": self.moa_timeout if self.strategy == "moa" else None,
             "cooling_down": self._clock() < self._skip_until,
             "last_error": self.last_error,
+            "last_moa_error": self.last_moa_error,
         }

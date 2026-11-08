@@ -1,0 +1,4 @@
+.cache/
+data/
+# copied from scripts/sensor_bridge.py at deploy time; edit the original
+python/sensor_bridge.py

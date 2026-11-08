@@ -45,13 +45,22 @@ class AppContext:
             timeout=settings.swarm_timeout,
             max_retries=settings.swarm_max_retries,
             sync_endpoint=settings.swarm_sync_endpoint,
+            moa_aggregator_model=settings.swarm_moa_aggregator_model,
         )
         self.drafter = CloudDrafter(
             swarm=self.swarm,
             monitor=self.monitor,
             stages=settings.alert_cloud_stages,
-            timeout=settings.alert_cloud_timeout,
+            # With MoA the stage needs room for MoA plus a single-agent retry.
+            timeout=(
+                max(settings.alert_cloud_timeout, settings.swarm_moa_timeout + 8.0)
+                if settings.swarm_strategy == "moa"
+                else settings.alert_cloud_timeout
+            ),
             cooldown=settings.breaker_cooldown,
+            strategy=settings.swarm_strategy,
+            moa_min_severity=settings.swarm_moa_min_severity,
+            moa_timeout=settings.swarm_moa_timeout,
         )
         self.alert_pipeline = AlertPipeline(cloud=self.drafter)
         self.local = build_local_processor(
@@ -145,6 +154,7 @@ class AppContext:
                 "agents": ["weather", "safety", "communication"],
                 "cloud_stages": sorted(self.settings.alert_cloud_stages),
                 "cloud_ready": self.drafter.enabled("communication"),
+                "cloud": self.drafter.snapshot(),
             },
             "sync": {
                 "configured": self.swarm.can_sync,

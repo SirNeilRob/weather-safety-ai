@@ -331,6 +331,7 @@ async def health(request: Request) -> dict:
             "agents": ["weather", "safety", "communication"],
             "cloud_stages": sorted(ctx.settings.alert_cloud_stages),
             "cloud_ready": ctx.drafter.enabled("communication"),
+            "cloud": ctx.drafter.snapshot(),
         },
         "queue": stats,
         "noaa": (

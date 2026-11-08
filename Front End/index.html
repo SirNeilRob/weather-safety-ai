@@ -222,7 +222,11 @@ let lang = 'en';
 try { if (localStorage.getItem(langKey) === 'es') lang = 'es'; } catch {}
 
 // Everything shown comes from these backend responses (or a saved copy of them).
-const S = {health:null, noaa:null, queue:null, jobs:null, alerts:null, savedAt:null, reachable:null, cached:false};
+const S = {
+  health:null, noaa:null, queue:null, jobs:null, alerts:null,
+  savedAt:null, reachable:null, cached:false,
+  simulator:null
+};
 let notices = null;
 let browse = null;      // last Florida alerts list from api.weather.gov (features), null until loaded
 let busy = false;       // a watch-list change is in flight
@@ -338,7 +342,11 @@ function card(job) {
   const who = {swarm:t.swarmsW, local:t.localW, mixed:t.mixedW}[r.pipeline_engine];
   const writer = el('p', 'writer ' + (r.pipeline_engine === 'local' ? 'w-local' : r.pipeline_engine ? 'w-swarm' : ''));
   writer.append(el('b', '', `${t.writtenBy}: ${who || DASH}`));
-  const stages = (r.trace || []).map(s => `${t.stage[s.agent] || s.agent}: ${s.engine === 'swarm' ? 'Swarms' : s.engine === 'local' ? 'Local' : (s.engine || DASH)}`);
+  const swarmLabel = s => {
+    const c = (s.detail && s.detail.cloud) || {};
+    return c.strategy === 'moa' ? `Swarms MoA (${(c.experts || []).length} experts → ${c.aggregator || 'editor'})` : 'Swarms';
+  };
+  const stages = (r.trace || []).map(s => `${t.stage[s.agent] || s.agent}: ${s.engine === 'swarm' ? swarmLabel(s) : s.engine === 'local' ? 'Local' : (s.engine || DASH)}`);
   if (stages.length) writer.append(el('br'), el('span', 'muted', stages.join(' · ')));
   art.append(writer, dl);
 
@@ -404,7 +412,14 @@ function wxBlock(c) {
   info.firstChild.style.fontWeight = '700';
   row.append(el('span', 'temp', o ? withUnit(o.temperature_f, '°F') : DASH), info);
   const dl = el('dl', 'facts');
-  fact(dl, t.wind, o ? withUnit(o.wind_mph, ' mph') : DASH);
+  const simulated = S.simulator && !S.noaa;
+fact(
+  dl,
+  simulated ? 'SIMULATED WIND (ADXL345)' : t.wind,
+  simulated
+    ? withUnit(S.simulator.simulated_wind_mph, ' mph')
+    : o ? withUnit(o.wind_mph, ' mph') : DASH
+);
   fact(dl, t.feels, o ? withUnit(o.feels_like_f, '°F') : DASH);
   fact(dl, t.hum, o ? withUnit(o.humidity_pct, '%') : DASH);
   box.append(row, dl, el('p', 'muted', o?.observed_at ? t.observed + when(o.observed_at) : DASH));
@@ -468,6 +483,11 @@ async function refresh() {
     call('/v1/health', {ms:5000}), call('/v1/noaa', {ms:5000}), call('/v1/queue/summary', {ms:5000}),
     call('/v1/jobs?limit=10', {ms:5000}), call('/v1/alerts/active', {ms:8000})]);
   const [h, nb, q, jobs, act] = results.map(r => r.status === 'fulfilled' ? r.value : null);
+try {
+  S.simulator = await call('/v1/simulator/status', {ms:3000});
+} catch {
+  S.simulator = null;
+}
   S.health = h;
   S.reachable = Boolean(h);
   if (h) {

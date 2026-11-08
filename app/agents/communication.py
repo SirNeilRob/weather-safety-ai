@@ -10,7 +10,14 @@ Produces four channels, in both languages:
 The SMS length work is not cosmetic. Spanish text with accents drops out of
 GSM-7 into UCS-2, which cuts the per-segment budget from 160 to 70 characters,
 so a message that looks like 120 characters can bill as two segments. The agent
-reports ``encoding`` and ``segments`` instead of silently sending a longer bill.
+reports ``encoding`` and ``segments`` instead of silently sending a longer bill,
+and caps the SMS at two segments: attribution is dropped before the instruction
+is ever truncated.
+
+Before measuring, typography is folded to its GSM-7 equivalent: an em dash in an
+area name ("ResQ node \u2014 venue") otherwise drops an English alert into the
+70-character budget over one decorative character. Accents are never stripped;
+where no equivalent exists the fallback to UCS-2 is reported honestly.
 """
 
 from __future__ import annotations
@@ -35,6 +42,44 @@ GSM7_CHARS = frozenset(
     "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?"
     "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
 )
+
+
+#: Characters with a meaning-preserving GSM-7 equivalent. A single em dash
+#: ("ResQ node \u2014 venue") drops the whole message out of the 160-character
+#: GSM-7 budget into the 70-character UCS-2 one, so one decorative character
+#: doubles the carrier bill. Folding is lossless for the reader.
+GSM7_FOLD = {
+    "\u2014": "-",  # em dash
+    "\u2013": "-",  # en dash
+    "\u2012": "-",  # figure dash
+    "\u2212": "-",  # minus sign
+    "\u2018": "'",  # left single quote
+    "\u2019": "'",  # right single quote
+    "\u201a": "'",
+    "\u201c": '"',  # left double quote
+    "\u201d": '"',  # right double quote
+    "\u201e": '"',
+    "\u2026": "...",  # horizontal ellipsis
+    "\u00a0": " ",  # no-break space
+    "\u202f": " ",
+    "\u2009": " ",
+    "\u2265": ">=",
+    "\u2264": "<=",
+}
+
+
+def to_gsm7(text: str) -> str:
+    """Fold typography to GSM-7 before the SMS is measured.
+
+    Only characters with an exact readable equivalent are folded. Spanish
+    accents (\u00e1, \u00ed, \u00f3, \u00fa) have none, so Spanish SMS still
+    falls back to UCS-2 and the agent keeps reporting the honest segment count
+    rather than silently de-accenting a life-safety message.
+    """
+    text = text.replace("\u00b0C", "C").replace("\u00b0F", "F")
+    for character, replacement in GSM7_FOLD.items():
+        text = text.replace(character, replacement)
+    return text
 
 
 def _label_for(hazard: str, language: str) -> str:
@@ -88,6 +133,23 @@ def sms_meta(text: str) -> dict[str, Any]:
     }
 
 
+def _sms_text(header: str, area: str, action: str, source: str) -> str:
+    """Compose the SMS inside a two-segment budget.
+
+    The instruction is never what gets cut: attribution goes first, then the
+    text is truncated. Spanish with accents is UCS-2, where a 141-character
+    message is three segments; dropping "- source" brings the same alert back
+    to two and keeps "Agáchese, cúbrase y agárrese" intact. Two segments is the
+    ceiling because concatenated SMS can arrive out of order, and a safety
+    instruction split across three of them is worse than a shorter message.
+    """
+    text = to_gsm7(f"{header}. {area}. {action} - {source}")
+    if sms_meta(text)["segments"] > 2:
+        text = to_gsm7(f"{header}. {area}. {action}")
+    limit = SMS_LIMIT if sms_meta(text)["encoding"] == "gsm7" else 2 * 67
+    return fit(text, limit, ellipsis="...")
+
+
 def _what_happened(alert: NormalizedAlert, language: str) -> tuple[str, dict[str, Any]]:
     source_text = alert.description or alert.headline or alert.event
     summary = " ".join(sentences(source_text, 2)) if source_text else ""
@@ -124,11 +186,8 @@ def build(alert: NormalizedAlert, classification: dict, safety: dict) -> dict[st
         action = safety["first_action"][language]
 
         # ------------------------------------------------------------ SMS
-        if severity == "unknown":
-            sms_body = f"{title}. {area}. {action} - {source}"
-        else:
-            sms_body = f"{title}. {severity_word.upper()}. {area}. {action} - {source}"
-        sms_text = fit(sms_body, SMS_LIMIT)
+        header = title if severity == "unknown" else f"{title}. {severity_word.upper()}"
+        sms_text = _sms_text(header, area, action, source)
         messages["sms"][language] = {"text": sms_text, **sms_meta(sms_text)}
 
         # ------------------------------------------------------------ push
@@ -147,8 +206,8 @@ def build(alert: NormalizedAlert, classification: dict, safety: dict) -> dict[st
             translation_report[language] = translation_meta
 
         lines: list[str] = []
-        header = title if severity == "unknown" else f"{title} — {severity_word.upper()}"
-        lines.append(header)
+        bulletin_header = title if severity == "unknown" else f"{title} — {severity_word.upper()}"
+        lines.append(bulletin_header)
         lines.append(f"{'Area' if language == 'en' else 'Zona'}: {area}")
         if alert.onset or expires:
             when = " – ".join(part for part in (alert.onset, expires) if part)

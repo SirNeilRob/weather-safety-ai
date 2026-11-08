@@ -51,14 +51,67 @@ def _extract_json(text: str):
     except _json.JSONDecodeError:
         pass
 
+    # Decode the first complete object and ignore whatever follows it: models
+    # (seen live from the MoA editor) sometimes append a stray "}" or a note.
     start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
+    if start != -1:
         try:
-            return _json.loads(text[start : end + 1])
+            obj, _end = _json.JSONDecoder().raw_decode(text[start:])
+            return obj
         except _json.JSONDecodeError:
             return None
     return None
+
+
+# Prompt fragments shared by the single-agent and Mixture-of-Agents paths, so
+# the two can never drift apart on the rules that matter for safety.
+_GROUND_RULES = (
+    "Do not invent facts, do not change the severity, and do not add "
+    "actions that are not in the safety plan."
+)
+_CHANNEL_SCHEMA = (
+    '{"title": {"en": str, "es": str}, '
+    '"sms": {"en": {"text": str}, "es": {"text": str}}, '
+    '"push": {"en": {"title": str, "body": str}, "es": {"title": str, "body": str}}, '
+    '"bulletin": {"en": str, "es": str}, '
+    '"voice": {"en": str, "es": str}}.'
+)
+_SPANISH_RULES = (
+    "Spanish must be natural Spanish, not word-for-word English, and "
+    "always addresses the reader formally (usted). "
+    "Use official_title exactly as given, in each language, wherever the "
+    "alert type is named; never substitute another product word "
+    "(in Spanish a Warning is 'Aviso', never 'Advertencia'). "
+    "SMS stays under 160 characters."
+)
+
+
+def _context_json(alert: dict, classification: dict, safety: dict, official_title: dict | None) -> str:
+    return json.dumps(
+        {
+            "alert": alert,
+            "classification": {
+                "hazard": classification.get("hazard"),
+                "severity": classification.get("severity"),
+                "product": classification.get("product"),
+            },
+            "safety": {
+                "immediate": [item["en"] for item in safety.get("immediate", [])],
+                "avoid": [item["en"] for item in safety.get("avoid", [])],
+            },
+            "official_title": official_title or {},
+        },
+        ensure_ascii=False,
+    )
+
+
+def _usage_summary(usage: Any) -> dict | None:
+    if not isinstance(usage, dict):
+        return None
+    return {
+        "total_tokens": usage.get("total_tokens"),
+        "cost_usd": usage.get("total_cost"),
+    }
 
 
 class SwarmProcessor:
@@ -75,7 +128,11 @@ class SwarmProcessor:
         sync_endpoint: str | None = None,
         retry_base: float = 0.5,
         transport: httpx.AsyncBaseTransport | None = None,
+        swarm_path: str = "/v1/swarm/completions",
+        moa_aggregator_model: str | None = None,
     ) -> None:
+        self.swarm_path = swarm_path if swarm_path.startswith("/") else f"/{swarm_path}"
+        self.moa_aggregator_model = moa_aggregator_model
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key
         self.endpoint = endpoint if endpoint.startswith("/") else f"/{endpoint}"
@@ -241,8 +298,11 @@ class SwarmProcessor:
         }
 
     async def _call(self, kind: str, payload: dict) -> dict:
-        body = self._build_body(kind, payload)
-        client_kwargs: dict[str, Any] = {"timeout": httpx.Timeout(self.timeout)}
+        return self._parse(await self._post(self.endpoint, self._build_body(kind, payload)))
+
+    async def _post(self, path: str, body: dict, timeout: float | None = None) -> Any:
+        """POST with retries; returns the decoded JSON body."""
+        client_kwargs: dict[str, Any] = {"timeout": httpx.Timeout(timeout or self.timeout)}
         if self._transport is not None:
             client_kwargs["transport"] = self._transport
 
@@ -251,7 +311,7 @@ class SwarmProcessor:
             try:
                 async with httpx.AsyncClient(**client_kwargs) as client:
                     response = await client.post(
-                        self._url(self.endpoint), json=body, headers=self._headers()
+                        self._url(path), json=body, headers=self._headers()
                     )
             except (httpx.TransportError, httpx.TimeoutException, OSError) as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"
@@ -288,7 +348,73 @@ class SwarmProcessor:
                 raise ProcessorUnavailable(self.last_error) from exc
 
             self.last_error = None
-            return self._parse(data)
+            return data
+
+    # ------------------------------------------------------------------ multi-agent swarms
+    async def run_swarm(self, spec: dict, timeout: float | None = None) -> dict:
+        """Run a multi-agent swarm (``POST /v1/swarm/completions``).
+
+        Recorded in ``last_call`` exactly like a single-agent call, so the
+        dashboard's Swarms chip reflects whichever path ran last.
+        """
+        if not self.configured:
+            raise ProcessorUnavailable("SWARM_BASE_URL is not configured")
+        started = time.monotonic()
+        try:
+            data = await self._post(self.swarm_path, spec, timeout=timeout)
+            result = self._parse_swarm(data, aggregator=(spec.get("agents") or [{}])[-1].get("agent_name"))
+        except asyncio.CancelledError:
+            self._record(started, "cancelled: caller timed out")
+            raise
+        except Exception as exc:
+            self._record(started, f"{type(exc).__name__}: {exc}")
+            raise
+        self._record(started, None)
+        return result
+
+    @staticmethod
+    def _parse_swarm(data: Any, aggregator: str | None) -> dict:
+        """Split a swarm reply into the aggregator's answer and the expert drafts.
+
+        Verified against the live API: ``output`` is a list of
+        ``{"role": <agent_name>, "content": str}`` messages, preceded by a
+        ``System`` team summary, with the aggregator (last agent) answering last.
+        """
+        if not isinstance(data, dict):
+            raise ProcessorUnavailable("swarm returned a non-object body")
+        output = data.get("output")
+        if isinstance(output, str) and output.strip():
+            return {"text": output, "experts": [], "usage": data.get("usage"), "engine": "swarm"}
+        if not isinstance(output, list):
+            raise ProcessorUnavailable("swarm returned no output")
+
+        turns = [
+            item for item in output
+            if isinstance(item, dict)
+            and isinstance(item.get("content"), str)
+            and str(item.get("role", "")).lower() != "system"
+        ]
+        if not turns:
+            raise ProcessorUnavailable("swarm output had no agent turns")
+
+        final = next(
+            (item for item in reversed(turns) if aggregator and item.get("role") == aggregator),
+            turns[-1],
+        )
+        experts = [
+            {"agent": item.get("role"), "chars": len(item["content"])}
+            for item in turns
+            if item is not final
+        ]
+        return {
+            "text": final["content"],
+            "aggregator": final.get("role"),
+            "experts": experts,
+            "usage": data.get("usage"),
+            "job_id": data.get("job_id"),
+            "execution_time": data.get("execution_time"),
+            "engine": "swarm",
+        }
 
     async def push_sync(self, record: dict) -> dict:
         """Push one offline-produced result upstream for reconciliation."""
@@ -327,43 +453,16 @@ class SwarmProcessor:
         Returns parsed JSON only. Callers must validate the shape before use;
         the pipeline falls back to the local agent on anything unexpected.
         """
-        import json as _json
-
         system = (
             "You are the Communication agent of an emergency alerting system. "
             "You receive a classified weather alert and a verified safety plan. "
             "Rewrite the delivery channels so they are clear and calm. "
-            "Do not invent facts, do not change the severity, and do not add "
-            "actions that are not in the safety plan. "
-            "Return ONLY a JSON object with this exact shape: "
-            '{"title": {"en": str, "es": str}, '
-            '"sms": {"en": {"text": str}, "es": {"text": str}}, '
-            '"push": {"en": {"title": str, "body": str}, "es": {"title": str, "body": str}}, '
-            '"bulletin": {"en": str, "es": str}, '
-            '"voice": {"en": str, "es": str}}. '
-            "Spanish must be natural Spanish, not word-for-word English, and "
-            "always addresses the reader formally (usted). "
-            "Use official_title exactly as given, in each language, wherever the "
-            "alert type is named; never substitute another product word "
-            "(in Spanish a Warning is 'Aviso', never 'Advertencia'). "
-            "SMS stays under 160 characters."
+            + _GROUND_RULES
+            + " Return ONLY a JSON object with this exact shape: "
+            + _CHANNEL_SCHEMA
+            + " " + _SPANISH_RULES
         )
-        user = _json.dumps(
-            {
-                "alert": alert,
-                "classification": {
-                    "hazard": classification.get("hazard"),
-                    "severity": classification.get("severity"),
-                    "product": classification.get("product"),
-                },
-                "safety": {
-                    "immediate": [item["en"] for item in safety.get("immediate", [])],
-                    "avoid": [item["en"] for item in safety.get("avoid", [])],
-                },
-                "official_title": official_title or {},
-            },
-            ensure_ascii=False,
-        )
+        user = _context_json(alert, classification, safety, official_title)
 
         result = await self.run(
             "communication",
@@ -385,6 +484,109 @@ class SwarmProcessor:
         if parsed is None:
             raise ProcessorUnavailable("swarm communication was not valid JSON")
         return parsed
+
+    async def draft_communication_moa(
+        self,
+        alert: dict,
+        classification: dict,
+        safety: dict,
+        official_title: dict | None = None,
+        timeout: float | None = None,
+    ) -> tuple[dict, dict]:
+        """Mixture of Agents: three specialists draft in parallel, an editor merges.
+
+        * English writer and Spanish writer split the copy by language, so each
+          writes half as much and Spanish is authored natively, not translated.
+        * Fact checker lists what the copy must keep (where, until when, who is
+          most at risk) and anything the writers must not claim.
+        * Editor (the aggregator, last agent) merges the drafts into the exact
+          channel schema, applying the fact checker's notes.
+
+        Returns ``(payload, meta)``. The payload goes through the same
+        validation as the single-agent path; ``meta`` feeds the stage trace.
+        """
+        context = _context_json(alert, classification, safety, official_title)
+        # Experts draft, the editor writes the final text, so experts are kept
+        # short: their length is latency the editor pays for again.
+        expert_tokens = 500
+
+        def agent(name: str, description: str, prompt: str, *, model: str | None = None,
+                  max_tokens: int = expert_tokens) -> dict:
+            return {
+                "agent_name": name,
+                "description": description,
+                "system_prompt": prompt,
+                "model_name": model or self.model,
+                "role": "worker",
+                "max_loops": 1,
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+            }
+
+        agents = [
+            agent(
+                "EN-Writer",
+                "Writes the English SMS, push, bulletin and voice copy.",
+                "You write the ENGLISH copy for an emergency alert. "
+                + _GROUND_RULES
+                + " Draft: title, sms (under 160 characters), push title and body, a "
+                "3-5 sentence bulletin, and a voice script that sounds natural read aloud. "
+                "English only. Use official_title.en exactly where the alert type is named.",
+            ),
+            agent(
+                "ES-Writer",
+                "Writes the Spanish copy natively, formal usted.",
+                "Usted redacta la copia en ESPAÑOL para una alerta de emergencia. "
+                + _GROUND_RULES
+                + " Draft in Spanish only: title, sms (under 160 characters), push title and "
+                "body, a 3-5 sentence bulletin, and a voice script. " + _SPANISH_RULES,
+            ),
+            agent(
+                "Fact-Checker",
+                "Lists the facts the copy must keep and the claims it must not make.",
+                "You are the fact checker for an emergency alert. Do NOT write alert copy. "
+                "From the alert and safety plan, list in short bullets: (1) MUST KEEP: the "
+                "affected area, the time it ends, the single most important action, and "
+                "who is most at risk if the alert says so; (2) MUST NOT: any claim, place, "
+                "time or action not present in the input; (3) the severity, which must not "
+                "be softened or exaggerated.",
+                max_tokens=400,
+            ),
+            agent(
+                "Editor",
+                "Aggregator: merges the expert drafts into the final channel JSON.",
+                "You are the editor. You receive an English draft, a Spanish draft and a "
+                "fact checker's notes for the same emergency alert. Merge them into the "
+                "final copy, fixing anything the fact checker flags. "
+                + _GROUND_RULES
+                + " " + _SPANISH_RULES
+                + " Return ONLY a JSON object with this exact shape and nothing else: "
+                + _CHANNEL_SCHEMA,
+                model=self.moa_aggregator_model or self.model,
+                max_tokens=1400,
+            ),
+        ]
+        spec = {
+            "name": "ResQ Communication MoA",
+            "description": "Bilingual emergency alert copy: parallel writers, fact check, editor.",
+            "swarm_type": "MixtureOfAgents",
+            "max_loops": 1,
+            "agents": agents,
+            "task": "Write the delivery copy for this alert.\n\n" + context,
+        }
+
+        result = await self.run_swarm(spec, timeout=timeout)
+        parsed = _extract_json(result.get("text") or "")
+        if parsed is None:
+            raise ProcessorUnavailable("swarm MoA editor did not return valid JSON")
+        meta = {
+            "strategy": "moa",
+            "swarm_type": "MixtureOfAgents",
+            "experts": [a["agent_name"] for a in agents[:-1]],
+            "aggregator": result.get("aggregator") or agents[-1]["agent_name"],
+            "usage": _usage_summary(result.get("usage")),
+        }
+        return parsed, meta
 
     def snapshot(self) -> dict:
         return {

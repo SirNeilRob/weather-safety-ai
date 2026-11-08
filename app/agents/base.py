@@ -28,16 +28,21 @@ def sentences(text: str, limit: int = 3) -> list[str]:
     return parts[:limit]
 
 
-def fit(text: str, limit: int) -> str:
-    """Hard limit a message without cutting a word in half."""
+def fit(text: str, limit: int, ellipsis: str = "…") -> str:
+    """Hard limit a message without cutting a word in half.
+
+    ``ellipsis`` is a parameter because the SMS channel must use three ASCII
+    dots: U+2026 is not in the GSM-7 alphabet, so a single ellipsis would push
+    an otherwise 150-character message into the 70-character UCS-2 budget.
+    """
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) <= limit:
         return text
-    window = text[: max(0, limit - 1)]
+    window = text[: max(0, limit - len(ellipsis))]
     cut = window.rfind(" ")
     if cut > limit * 0.5:
         window = window[:cut]
-    return window.rstrip(" ,;:-") + "…"
+    return window.rstrip(" ,;:-") + ellipsis
 
 
 @dataclass(slots=True)

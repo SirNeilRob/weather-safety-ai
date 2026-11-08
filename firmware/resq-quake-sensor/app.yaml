@@ -1,0 +1,5 @@
+# ResQ quake sensor: ADXL345 on the UNO Q header -> earthquake alerts.
+name: ResQ Quake Sensor
+icon: 🌋
+ports: []
+bricks: []
