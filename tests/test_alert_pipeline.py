@@ -8,7 +8,7 @@ from app.agents.cloud import CloudDrafter
 from app.agents.communication import sms_meta
 from app.agents.pipeline import AlertPipeline
 from app.domain.alert import normalize
-from tests.fixtures.samples import SAMPLES
+from app.knowledge.samples import SAMPLES
 
 
 def sample(name: str) -> dict:
@@ -117,6 +117,29 @@ async def test_sms_stays_inside_one_gsm7_segment_for_english(pipeline) -> None:
 
 
 @pytest.mark.anyio
+async def test_typographic_punctuation_does_not_force_ucs2(pipeline) -> None:
+    """One em dash must not double the carrier bill for an English alert.
+
+    119 characters fits GSM-7, but an em dash in the area name dropped the
+    whole message into the 70-character UCS-2 budget and billed two segments.
+    """
+    result = await pipeline.run(
+        {
+            "event": "Earthquake Warning",
+            "severity": "Severe",
+            "areaDesc": "ResQ node \u2014 Hackathon venue",
+            "headline": "Strong shaking detected by ResQ sensor",
+            "description": "Peak 0.21 g sustained for 2.4 s",
+        }
+    )
+    sms = result["communication"]["sms"]["en"]
+    assert sms["encoding"] == "gsm7"
+    assert sms["segments"] == 1
+    assert "\u2014" not in sms["text"]
+    assert "ResQ node - Hackathon venue" in sms["text"]
+
+
+@pytest.mark.anyio
 async def test_spanish_sms_uses_ucs2_budget_honestly(pipeline) -> None:
     result = await pipeline.run(sample("tornado_emergency")["alert"])
     sms = result["communication"]["sms"]["es"]
@@ -125,6 +148,29 @@ async def test_spanish_sms_uses_ucs2_budget_honestly(pipeline) -> None:
     expected_segments = 1 if sms["chars"] <= 70 else math.ceil(sms["chars"] / 67)
     assert sms["segments"] == expected_segments
     assert "Aviso de tornado" in sms["text"]
+
+
+@pytest.mark.anyio
+async def test_long_bilingual_alert_never_exceeds_two_sms_segments(pipeline) -> None:
+    """Attribution is dropped before the instruction is ever cut.
+
+    Spanish with accents is UCS-2: 141 characters would bill three segments.
+    """
+    result = await pipeline.run(
+        {
+            "event": "Earthquake Warning",
+            "severity": "Severe",
+            "areaDesc": "ResQ node - Hackathon venue",
+            "headline": "Strong shaking detected by ResQ sensor",
+            "description": "Peak 0.21 g sustained for 2.4 s",
+            "senderName": "ResQ on-device sensor",
+        }
+    )
+    for language in ("en", "es"):
+        sms = result["communication"]["sms"][language]
+        assert sms["segments"] <= 2
+    assert "Agáchese" in result["communication"]["sms"]["es"]["text"]
+    assert "Drop, cover, and hold on" in result["communication"]["sms"]["en"]["text"]
 
 
 def test_sms_metadata_boundaries() -> None:

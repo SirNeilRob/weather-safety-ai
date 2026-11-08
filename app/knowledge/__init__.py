@@ -1,1 +1,1 @@
-"""Curated hazard knowledge."""
+"""Curated hazard knowledge and sample alerts."""

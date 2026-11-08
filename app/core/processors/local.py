@@ -18,6 +18,8 @@ Ollama wrapper, so the offline path has no web dependencies at all.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import math
 import re
 from collections import Counter
@@ -341,3 +343,19 @@ def build_local_processor(
             fallback=LocalProcessor(alert_pipeline=alert_pipeline),
         )
     return LocalProcessor(alert_pipeline=alert_pipeline)
+
+
+async def _selftest() -> None:  # pragma: no cover - manual smoke check
+    sample = (
+        "The generator at the north site failed at 03:12. "
+        "Field crew restored power after replacing the fuel pump. "
+        "The outage affected 412 homes for 96 minutes. "
+        "A follow-up inspection is scheduled for 2026-11-09."
+    )
+    processor = LocalProcessor()
+    result = await processor.run("analyze", {"text": sample})
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(_selftest())

@@ -123,18 +123,3 @@ async def test_circuit_breaker_stops_hammering_a_broken_swarm() -> None:
     assert swarm.calls == 3
     assert fourth.mode == MODE_SWARM
     assert router.snapshot()["breaker"] == "closed"
-
-
-@pytest.mark.anyio
-async def test_online_alert_runs_the_full_pipeline_not_a_raw_swarm_prompt() -> None:
-    """Regression: online alerts used to go to swarm.run and lose every field."""
-    router, swarm = build(online=True)
-    alert = {"event": "Tornado Warning", "severity": "Severe", "areaDesc": "Cedar Rapids"}
-    outcome = await router.process("alert", {"alert": alert})
-
-    assert swarm.calls == 0
-    for field in ("classification", "safety", "communication", "trace"):
-        assert field in outcome.result, field
-    assert outcome.result["classification"]["hazard"] == "tornado"
-    assert outcome.mode == MODE_LOCAL
-    assert outcome.sync_state == SYNC_NOT_NEEDED

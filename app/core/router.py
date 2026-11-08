@@ -7,11 +7,6 @@ Decision order for every job:
 3. Swarm not configured                                 -> local
 4. Otherwise try Swarm, and on *any* deliberate failure  -> local + mark for sync
 
-Alert jobs are the exception: they always run the local Weather -> Safety ->
-Communication pipeline, which itself hands only the communication stage to
-Swarm when online. Sending a raw alert to Swarm as a chat prompt would return
-prose with no classification or safety plan.
-
 Step 4 is what keeps the product usable: the user gets a result either way, and
 the fact that Swarm was skipped is recorded on the job (``mode`` + ``note``) so
 the UI can be honest about it instead of pretending the cloud answered.
@@ -26,7 +21,6 @@ from typing import Callable
 
 from .db import SYNC_NOT_NEEDED, SYNC_PENDING
 from .processors.base import ProcessorUnavailable
-from .processors.local import ALERT_KINDS
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +89,6 @@ class SmartRouter:
     ) -> RouteOutcome:
         not_online = not self.monitor.is_online()
 
-        if kind in ALERT_KINDS:
-            return await self._process_alert(kind, payload, not_online)
-
         if prefer_local or not_online:
             note = "requested local" if prefer_local else "device offline"
             result = await self.local.run(kind, payload)
@@ -146,24 +137,6 @@ class SmartRouter:
         self._record_success()
         self._last_mode = MODE_SWARM
         return RouteOutcome(result, MODE_SWARM, SYNC_NOT_NEEDED, None)
-
-    async def _process_alert(self, kind: str, payload: dict, not_online: bool) -> RouteOutcome:
-        result = await self.local.run(kind, payload)
-        used_swarm = result.get("pipeline_engine") in ("swarm", "mixed")
-        if used_swarm:
-            self._last_mode = MODE_SWARM
-            return RouteOutcome(
-                result, MODE_SWARM, SYNC_NOT_NEEDED, "alert pipeline; communication via swarm"
-            )
-        self._last_mode = MODE_LOCAL
-        if not_online:
-            note = "device offline"
-        elif not getattr(self.swarm, "configured", False):
-            note = "swarm not configured"
-        else:
-            note = "alert pipeline; swarm copy unavailable, local composer used"
-        sync_state = self._local_sync_state() if not_online else SYNC_NOT_NEEDED
-        return RouteOutcome(result, MODE_LOCAL, sync_state, note)
 
     def snapshot(self) -> dict:
         return {

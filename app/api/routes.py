@@ -3,6 +3,7 @@
 Contract the frontend codes against:
 
     POST /v1/alerts              submit a weather alert, get a job back
+    GET  /v1/alerts/samples      demo alerts with expected results
     GET  /v1/hazards             legend: severity levels, hazards, languages
     POST /v1/jobs                generic job (alert, summarize, classify, extract)
     GET  /v1/jobs/{id}           poll status / result
@@ -20,15 +21,14 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..core.db import FAILED, PENDING, RUNNING, STATUSES, Job
-from ..core.noaa import WatchlistError
 from ..knowledge.hazards import HAZARDS, PRODUCT_TYPES, SEVERITY_LABELS
+from ..knowledge.samples import SAMPLES
 
 router = APIRouter(prefix="/v1")
 
@@ -87,16 +87,6 @@ class JobResponse(BaseModel):
 
 class OfflineToggle(BaseModel):
     enabled: bool
-
-
-class WatchZipRequest(BaseModel):
-    zip: str
-
-
-class WatchPointRequest(BaseModel):
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    name: str
 
 
 # ---------------------------------------------------------------------- helpers
@@ -175,112 +165,18 @@ async def create_alert(body: AlertCreateRequest, request: Request) -> JobRespons
     return JobResponse.from_job(current or job)
 
 
-def _expired(result: dict | None, now: datetime) -> bool:
-    expires = ((result or {}).get("alert") or {}).get("expires")
-    if not expires:
-        return False
-    try:
-        moment = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
-    return moment <= now
-
-
-@router.get("/alerts/active")
-async def active_alerts(
-    request: Request,
-    limit: int = Query(default=20, ge=1, le=100),
-) -> dict:
-    """Processed alerts the dashboard should show, newest first.
-
-    Served from SQLite, so it answers identically online and offline. Alerts
-    whose ``expires`` time has passed are left out.
-    """
-    ctx = _ctx(request)
-    now = datetime.now(timezone.utc)
-    jobs = await ctx.store.list(limit=200, status="done")
-    noaa = ctx.noaa
-
-    def still_issued(job: Job) -> bool:
-        # NOAA alerts are shown only while NWS still lists them as active
-        # (updates and cancellations replace them); offline, the last list wins.
-        if noaa is None or (job.payload or {}).get("source") != "noaa":
-            return True
-        return noaa.is_current(((job.payload or {}).get("alert") or {}).get("identifier"))
-
-    def with_cities(job: Job) -> dict:
-        # Which watched cities this alert covers (one card, every city listed).
-        item = JobResponse.from_job(job).model_dump()
-        identifier = ((job.payload or {}).get("alert") or {}).get("identifier")
-        item["cities"] = noaa.cities_for(identifier) if noaa is not None else []
-        return item
-
-    alerts = [
-        with_cities(job)
-        for job in jobs
-        if job.kind == ALERT_KIND
-        and job.result
-        and not _expired(job.result, now)
-        and still_issued(job)
-    ][:limit]
-    return {"count": len(alerts), "alerts": alerts}
-
-
-def _noaa(request: Request):
-    ctx = _ctx(request)
-    if ctx.noaa is None:
-        raise HTTPException(status_code=404, detail="NOAA feed is disabled (NOAA_ENABLED=false)")
-    return ctx.noaa
-
-
-@router.get("/noaa")
-async def noaa_status(request: Request) -> dict:
-    """Watch list, last poll, active NOAA alert count and one observation per city."""
-    return _noaa(request).snapshot()
-
-
-@router.get("/watchlist")
-async def watchlist(request: Request) -> dict:
-    feed = _noaa(request)
-    return {"cities": feed.watchlist(), "max_cities": feed.max_cities}
-
-
-@router.post("/watchlist", status_code=201)
-async def watchlist_add_zip(body: WatchZipRequest, request: Request) -> dict:
-    """Add a Florida ZIP (Census ZCTA lookup, city name from NWS /points)."""
-    feed = _noaa(request)
-    try:
-        city = await feed.add_zip(body.zip)
-    except WatchlistError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
-    return {"city": city, "cities": feed.watchlist()}
-
-
-@router.post("/watchlist/point", status_code=201)
-async def watchlist_add_point(body: WatchPointRequest, request: Request) -> dict:
-    """Add a point inside an NWS alert area (Browse Florida); named by its areaDesc."""
-    feed = _noaa(request)
-    try:
-        city = feed.add_point(body.latitude, body.longitude, body.name)
-    except WatchlistError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
-    return {"city": city, "cities": feed.watchlist()}
-
-
-@router.delete("/watchlist/{key}")
-async def watchlist_remove(key: str, request: Request) -> dict:
-    feed = _noaa(request)
-    if not feed.remove(key):
-        raise HTTPException(status_code=404, detail=f"{key} is not on the watch list")
-    return {"ok": True, "cities": feed.watchlist()}
-
-
-@router.post("/noaa/poll")
-async def noaa_poll(request: Request) -> dict:
-    """Fetch NOAA alerts and conditions now instead of waiting for the timer."""
-    return await _noaa(request).poll_once()
+@router.get("/alerts/samples")
+async def alert_samples() -> dict:
+    """Demo fixtures with the expected classification for each."""
+    return {
+        "count": len(SAMPLES),
+        "samples": SAMPLES,
+        "note": (
+            "Two samples are intentionally understated by the feed "
+            "(heat_understated, thunderstorm_minor) to demonstrate the "
+            "safety-first escalation rule."
+        ),
+    }
 
 
 @router.get("/hazards")
@@ -333,12 +229,6 @@ async def health(request: Request) -> dict:
             "cloud_ready": ctx.drafter.enabled("communication"),
         },
         "queue": stats,
-        "noaa": (
-            {k: v for k, v in ctx.noaa.snapshot().items() if k != "cities"}
-            | {"cities": len(ctx.noaa.cities)}
-            if ctx.noaa is not None
-            else {"enabled": False}
-        ),
         "sync": {
             "configured": ctx.swarm.can_sync,
             "last_result": ctx.syncer.last_result,

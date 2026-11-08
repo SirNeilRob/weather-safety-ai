@@ -10,10 +10,10 @@ A backend that keeps issuing weather warnings when the internet does not.
 
 The safety advice is **never** produced by a language model, online or offline:
 the deterministic Safety agent owns it in both modes. That is the design
-decision the whole system rests on.
+decision the whole demo rests on.
 
-Status: **runs and is tested** — the test suite passes and the online→offline
-drill (`scripts/offline_drill.py`) runs a live NWS alert against the real Swarms API.
+Status: **runs, tested, demo-verified** — 123 tests pass and the live
+online→offline→sync drill passes 21/21 checks against the stand-in Swarm.
 
 Companion docs:
 
@@ -28,7 +28,8 @@ Companion docs:
 ## 1. Quick start
 
 ```bash
-cd backend
+git clone https://github.com/SirNeilRob/weather-safety-ai.git
+cd weather-safety-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # fill in SWARM_BASE_URL / SWARM_API_KEY if you have them
@@ -37,9 +38,23 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Open <http://127.0.0.1:8000/docs> for interactive API docs.
 
-`.env` (gitignored) holds `SWARMS_API_KEY` and points the backend at the real
-Swarms API (`https://api.swarms.world`, `POST /v1/agent/completions`). With no
-key the backend simply runs fully offline.
+No Swarm key yet? Run the stand-in API in a second terminal:
+
+```bash
+uvicorn scripts.fake_swarm:app --port 8899
+```
+
+and set in `.env`:
+
+```
+SWARM_BASE_URL=http://127.0.0.1:8899
+SWARM_SYNC_ENDPOINT=/v1/sync/ingest
+PROBE_URLS=http://127.0.0.1:8899/v1/health
+```
+
+That gives you the **online path and the sync path** without internet or
+credits. Everything below also works with `SWARM_BASE_URL` empty — that is just
+"always offline", which is the state we demo in.
 
 ---
 
@@ -88,23 +103,125 @@ raw CAP alert
   `communication.translation` — it reports which phrases it knew rather than
   pretending the output is fully translated.
 
+Sample output for a tornado warning while offline:
+
+```json
+{
+  "engine": "local",
+  "classification": { "hazard": "tornado", "severity": "extreme", "escalated": true },
+  "trace": [
+    {"agent": "weather", "engine": "local"},
+    {"agent": "safety", "engine": "local"},
+    {"agent": "communication", "engine": "local"}
+  ],
+  "communication": {
+    "sms": {
+      "en": {"text": "Tornado Warning. EXTREME. Cedar Rapids, …", "chars": 145, "segments": 1},
+      "es": {"segments": 3}
+    }
+  }
+}
+```
+
 `engine` is `local`, `swarm` or `mixed` — derived from what actually served the
 stages, not from whether the device happened to be online.
 
-### Live data only
+### Demo fixtures
 
-Alerts come from the NOAA/NWS feed (`/v1/noaa`, polled for each city on the
-watch list, up to 5 Florida cities) or from `POST /v1/alerts`. Nothing canned is served. The hand-written
-CAP alerts used to test classification live in `tests/fixtures/samples.py` and
-are never imported by `app/`.
+`GET /v1/alerts/samples` returns 10 CAP-shaped alerts, each with an `expected`
+block (hazard, severity, whether escalation is required). Two of them are
+deliberately mislabelled by the feed (`heat_understated`,
+`thunderstorm_minor`) so the escalation rule is visible in the demo instead of
+being a claim in a slide.
 
 ---
 
-## 3. API contract (for the frontend)
+## 3. The sensor bridge (accelerometer to alert)
+
+Part three of the ResQ chain. The microcontroller measures how hard and how
+long the ground shook; `scripts/sensor_bridge.py` turns that pair into the same
+CAP-shaped alert the pipeline already ingests. Nothing downstream is special-cased:
+the weather agent classifies it, the safety agent attaches the earthquake
+playbook, the communication agent writes the bilingual messages.
+
+```
+ESP32 --serial--> sensor_bridge.py --HTTP--> POST /v1/alerts --> weather -> safety -> communication
+```
+
+### Wire format
+
+The firmware writes one line per detected event. Three formats are accepted, so
+the firmware can change without touching Python:
+
+```
+PEAK=0.21 DUR=2.4          # g and seconds
+PEAK=210mg DUR=2400ms      # units honoured either way
+0.21,2.4                   # bare CSV, peak first
+{"peak_g": 0.21, "duration_s": 2.4}
+```
+
+### Why 0.21 g becomes "Severe"
+
+Peak ground acceleration is not a severity word. The bridge converts it with
+the PGA-to-intensity relation of Worden et al. (2012),
+
+```
+MMI = 3.66 * log10(PGA[cm/s^2]) - 1.66
+```
+
+which reproduces the familiar Wald et al. (1999) shaking table: 0.05 g is
+about MMI V, 0.1 g is VI, 0.2 g is VII, 0.4 g is VIII. The pipeline receives
+the severity word derived from that intensity, so the sensor and the alert
+vocabulary cannot drift apart.
+
+### The two gates
+
+A single MEMS sensor on a table is an earthquake detector *and* a box that can
+be knocked over. Three rules keep the second case from paging the venue:
+
+| Option | Default | Rejects |
+|---|---|---|
+| `--min-peak` | 0.03 g | background noise |
+| `--min-duration` | 1.0 s | a knock: 2.4 g that lasts 40 ms |
+| `--cooldown` | 120 s | the same earthquake twice; a stronger reading overrides |
+
+If the API is unreachable, the reading is spooled to `data/bridge_spool.jsonl`
+and replayed on the next successful contact, so a dropped link loses no event.
+
+### Running it
+
+```bash
+# no hardware: a fake node on a pseudo-terminal, then the bridge against it
+python3 scripts/sensor_sim.py --pty --scenario sequence      # prints /dev/pts/N
+python3 scripts/sensor_bridge.py --port /dev/pts/N --once --dry-run
+
+# replay a capture against a running backend
+python3 scripts/sensor_bridge.py --port tests/data/shake.log --once
+
+# real hardware
+python3 scripts/sensor_bridge.py --port /dev/ttyACM0
+```
+
+A clean run prints one line per skipped reading with the reason, then the job
+result:
+
+```
+  skipped: peak 0.01 g is below the 0.03 g sensor floor
+  skipped: 0.04 s of shaking is under the 1.0 s gate; treated as a knock, not a quake
+[23:15:30] peak 0.21 g / 2.4 s = MMI 7 -> severe
+  classified hazard=earthquake severity=severe product=warning confidence=0.85
+  sms en (1 seg, 129 chars): Earthquake Warning. SEVERE. ResQ node - Hackathon venue. Drop, cover, and hold on under sturdy furniture. - ResQ on-device sensor
+  sms es (2 seg, 117 chars): Aviso de terremoto. SEVERA. ResQ node - Hackathon venue. Agáchese, cúbrase y agárrese debajo de un mueble resistente.
+```
+
+---
+
+## 4. API contract (for the frontend)
 
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/alerts` | submit a weather alert → job id, or finished result with `wait_seconds` |
+| `GET` | `/v1/alerts/samples` | 10 demo alerts + expected classification |
 | `GET` | `/v1/hazards` | severity levels, hazard legend, products, channels, languages |
 | `GET` | `/v1/health` | link state, queue depth, sync backlog |
 | `POST` | `/v1/jobs` | generic job submit (kept for the non-alert kinds) |
@@ -112,14 +229,7 @@ are never imported by `app/`.
 | `GET` | `/v1/jobs` | recent jobs (`?limit=`, `?status=`) |
 | `GET` | `/v1/queue/summary` | queue + sync counters for the status badge |
 | `GET` | `/v1/capabilities` | what the UI may show as available |
-| `GET` | `/v1/alerts/active` | processed alerts to display (NOAA ones only while NWS still lists them) |
-| `GET` | `/v1/noaa` | watch list with one observation per city, last poll, active count |
-| `GET` | `/v1/watchlist` | watched cities (max 5, Florida only for now) |
-| `POST` | `/v1/watchlist` | add a Florida ZIP (`{"zip": "33130"}`) |
-| `POST` | `/v1/watchlist/point` | add a point inside an NWS alert area (`latitude`, `longitude`, `name`) |
-| `DELETE` | `/v1/watchlist/{key}` | remove a city (ZIP or `fl1`…) |
-| `POST` | `/v1/noaa/poll` | poll NOAA now |
-| `POST` | `/v1/demo/offline` | force offline on/off (endpoint name kept for compatibility) |
+| `POST` | `/v1/demo/offline` | force offline on/off (stage switch) |
 | `POST` | `/v1/sync/run` | force one reconciliation pass |
 
 Submit an alert:
@@ -150,7 +260,7 @@ are unchanged — see `app/core/processors/local.py` if you need them.
 
 ---
 
-## 4. How it decides what to use
+## 5. How it decides what to use
 
 Every job goes through the same decision order (`app/core/router.py`):
 
@@ -161,7 +271,7 @@ Every job goes through the same decision order (`app/core/router.py`):
 | 3 | `SWARM_BASE_URL` not configured | local engine |
 | 4 | otherwise | try Swarm → on any failure, fall back to local |
 
-Two details that matter in practice:
+Two details that matter in a live demo:
 
 * **The request never waits on a network probe.** Connectivity is one background
   task; submitting a job reads the last known state.
@@ -176,28 +286,31 @@ always local.
 
 ---
 
-## 5. Run the drill
+## 6. Run the drill
 
-With the backend running:
+With the backend (and optionally the stand-in Swarm) running:
 
 ```bash
 python3 scripts/offline_drill.py --base-url http://127.0.0.1:8000
+python3 scripts/offline_drill.py --base-url http://127.0.0.1:8000 \
+        --swarm-url http://127.0.0.1:8899     # also checks the sync inbox
 ```
 
-It fetches one currently active alert from api.weather.gov, submits it online,
-forces offline, submits it again, restores, and reconciles. It exits non-zero if
-any guarantee broke: offline processing, local engine reported, agent handoff
-chain intact, severity not below NWS, bilingual safety advice, no job lost.
+It walks online → forced offline → alert panel while offline → restored →
+reconciled, and exits non-zero if any guarantee broke. Section *3b* is the
+weather pipeline: samples published, tornado classified, severity escalated,
+local engine, agent handoff chain, SMS segment math, Spanish translation,
+bilingual safety. That is the 21/21 run.
 
 Tests:
 
 ```bash
-python3 -m pytest -q        # 91 passed
+python3 -m pytest -q        # 123 passed
 ```
 
 ---
 
-## 6. Repo layout
+## 7. Repo layout
 
 ```
 app/
@@ -208,6 +321,7 @@ app/
   domain/alert.py      CAP 1.2 normalisation → NormalizedAlert
   knowledge/
     hazards.py         hazard taxonomy, severity rules, EN/ES playbooks
+    samples.py         10 demo alerts with expected classifications
   agents/
     weather.py         classification + escalation + confidence
     safety.py          severity tier → bilingual safety plan
@@ -217,7 +331,7 @@ app/
   i18n/terms.py        curated EN/ES phrasebook + coverage signal
   core/
     db.py              SQLite job store (WAL, survives restarts)
-    connectivity.py    background probe loop + hysteresis + forced-offline switch
+    connectivity.py    background probe loop + hysteresis + demo switch
     router.py          Swarm vs local decision + circuit breaker
     worker.py          bounded worker pool draining the queue
     sync.py            pushes offline results upstream on reconnect
@@ -226,15 +340,18 @@ app/
       local.py         offline engine (summarize/classify/extract + Ollama)
       swarm.py         Swarm client (timeouts, retries, response normalisation)
 scripts/
+  fake_swarm.py        local stand-in for the Swarm API
   offline_drill.py     repeatable online/offline proof
-tests/                 91 tests: store, connectivity, router, processors,
-                       agents, translation, API
+  sensor_bridge.py     accelerometer (peak, duration) -> CAP alert -> /v1/alerts
+  sensor_sim.py        fake node on stdout or a pty, for demos without hardware
+tests/                 123 tests: store, connectivity, router, processors,
+                       agents, translation, API, sensor bridge
 docs/                  frontend contract, Swarm agent prompts, team split
 ```
 
 ---
 
-## 7. What is still an assumption
+## 8. What is still an assumption
 
 1. **Swarm request/response shape** — defaults to an OpenAI-compatible
    `POST /v1/chat/completions` and parses `choices[0].message.content`,
@@ -257,18 +374,22 @@ docs/                  frontend contract, Swarm agent prompts, team split
 
 ---
 
-## 8. Walkthrough (live data)
+## 9. Demo script (3 minutes)
 
-1. `GET /v1/health` → `connectivity.probes` shows whether api.weather.gov is
-   reachable; `swarm.last_call` shows the last Swarms call (ok/failed, ms).
-2. On the dashboard add a Florida ZIP (e.g. 33130) to the watch list, or use
-   **Browse Florida** → **Add to watch list** on a live NWS alert. Each card
-   shows its City, the NWS alert ID and a link to api.weather.gov.
-3. Point at the card's "Written by" line: Swarms AI for the message text when
-   online, local rules for classification and safety.
-4. `POST /v1/demo/offline {"enabled": true}` → health flips to `offline`; new
-   alerts are written by local rules only.
-5. `POST /v1/demo/offline {"enabled": false}` → `POST /v1/sync/run`.
-6. Close with: *"Classification and safety advice are deterministic and
+1. `GET /v1/health` → `mode: online`, Swarm configured, `pending_sync: 0`.
+2. `GET /v1/alerts/samples` → 10 alerts; point at `expected.escalated: true`
+   on `heat_understated` (the feed calls it moderate; we do not).
+3. `POST /v1/alerts` with `tornado_emergency` → `hazard: tornado`,
+   `severity: extreme`, `engine: local`, 3-step trace with each handoff line.
+4. Show `sms.en` (145 chars, 1 segment) next to `sms.es` (123 chars, 2
+   segments) and the bilingual `safety.immediate` list. Point out that the
+   Spanish costs a second segment because accented text leaves GSM-7, and that
+   attribution is dropped before the instruction is ever cut.
+5. `POST /v1/demo/offline {"enabled": true}` → health flips to `offline`.
+6. Re-submit the same alert → identical classification, `offline: true`,
+   `sync_state: pending`, `queue.pending_sync: 1`.
+7. `POST /v1/demo/offline {"enabled": false}` → `POST /v1/sync/run` →
+   `{"status":"ok","sent":1}`, then `GET /v1/sync/inbox` on the stand-in.
+8. Close with: *"Classification and safety advice are deterministic and
    identical in both modes; the network only changes who writes the prose. And
    the queue is SQLite, so a restart does not lose the warning."*

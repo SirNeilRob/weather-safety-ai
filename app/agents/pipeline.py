@@ -103,20 +103,15 @@ class AlertPipeline:
         # ------------------------------------------------------------ communication
         started = time.perf_counter()
         engine = "local"
-        # The local composer always runs (milliseconds): it is the fallback and
-        # it supplies the curated titles the cloud copy must keep.
-        local_messages = self.communication.run(alert, classification, safety_plan)
         messages = None
 
         if self.cloud is not None:
-            messages = await self.cloud.compose(
-                alert, classification, safety_plan, local=local_messages
-            )
+            messages = await self.cloud.compose(alert, classification, safety_plan)
             if messages is not None:
                 engine = "swarm"
 
         if messages is None:
-            messages = local_messages
+            messages = self.communication.run(alert, classification, safety_plan)
 
         elapsed = (time.perf_counter() - started) * 1000
         state.communication = messages

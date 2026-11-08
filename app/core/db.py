@@ -182,15 +182,6 @@ class JobStore:
                 ).fetchall()
         return [Job.from_row(row) for row in rows]
 
-    def _has_alert(self, identifier: str) -> bool:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT 1 FROM jobs WHERE kind = 'alert'"
-                " AND json_extract(payload, '$.alert.identifier') = ? LIMIT 1",
-                (identifier,),
-            ).fetchone()
-        return row is not None
-
     def _claim_next(self) -> Job | None:
         with self._lock:
             row = self._conn.execute(
@@ -314,10 +305,6 @@ class JobStore:
         self, limit: int = 25, status: str | None = None, newest_first: bool = True
     ) -> list[Job]:
         return await asyncio.to_thread(self._list, limit, status, newest_first)
-
-    async def has_alert(self, identifier: str) -> bool:
-        """True if an alert with this source identifier was already queued."""
-        return await asyncio.to_thread(self._has_alert, identifier)
 
     async def claim_next(self) -> Job | None:
         return await asyncio.to_thread(self._claim_next)

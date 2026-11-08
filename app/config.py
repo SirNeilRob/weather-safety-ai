@@ -38,9 +38,6 @@ def _csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
-NWS_PROBE = "https://api.weather.gov"
-
-
 def load_env_file(path: str | os.PathLike[str]) -> None:
     """Minimal .env loader. Real environment variables always win."""
     candidate = Path(path)
@@ -72,15 +69,14 @@ class Settings:
     # --- Swarm (remote) processor -------------------------------------------
     swarm_base_url: str | None = None
     swarm_api_key: str | None = None
-    swarm_endpoint: str = "/v1/agent/completions"
-    swarm_model: str = "gpt-4o-mini"
+    swarm_endpoint: str = "/v1/chat/completions"
+    swarm_model: str = "swarm-default"
     swarm_timeout: float = 20.0
     swarm_max_retries: int = 2
     swarm_sync_endpoint: str | None = None
 
     # --- Connectivity probing ----------------------------------------------
-    #: "Internet" means the board can reach NWS, the data source that matters.
-    probe_urls: tuple[str, ...] = (NWS_PROBE,)
+    probe_urls: tuple[str, ...] = ("https://1.1.1.1", "https://www.gstatic.com/generate_204")
     probe_interval: float = 5.0
     probe_timeout: float = 3.0
     offline_after_failures: int = 2
@@ -99,17 +95,6 @@ class Settings:
     # to let Swarm rewrite the delivery copy while classification and safety
     # stay local.
     alert_cloud_stages: tuple[str, ...] = ()
-    #: Hard cap on how long an alert waits for Swarm-written copy before the
-    #: local composer is used instead.
-    alert_cloud_timeout: float = 25.0
-
-    # --- NOAA / National Weather Service -----------------------------------
-    noaa_enabled: bool = True
-    #: Locations come only from the dashboard watch list (no default city).
-    watchlist_max: int = 5
-    noaa_poll_interval: float = 60.0
-    #: NWS requires an identifying User-Agent on every request.
-    noaa_user_agent: str = "ResQ-weather-safety/0.1 (+https://github.com/SirNeilRob/weather-safety-ai)"
 
     # --- Queue / workers ----------------------------------------------------
     worker_count: int = 2
@@ -138,9 +123,7 @@ class Settings:
 
         base_url = os.getenv("SWARM_BASE_URL") or None
         sync_endpoint = os.getenv("SWARM_SYNC_ENDPOINT") or None
-        # SWARMS_API_KEY is the name the Swarm scripts use; SWARM_API_KEY is
-        # still read so older .env files keep working.
-        api_key = os.getenv("SWARMS_API_KEY") or os.getenv("SWARM_API_KEY") or None
+        api_key = os.getenv("SWARM_API_KEY") or None
 
         return cls(
             app_name=os.getenv("APP_NAME", cls.app_name),
@@ -152,9 +135,7 @@ class Settings:
             swarm_timeout=_number("SWARM_TIMEOUT", cls.swarm_timeout),
             swarm_max_retries=int(_number("SWARM_MAX_RETRIES", cls.swarm_max_retries, int)),
             swarm_sync_endpoint=sync_endpoint,
-            # "Internet" on the dashboard means "can reach api.weather.gov", so it
-            # is always probed first, even if a stale PROBE_URLS is exported.
-            probe_urls=tuple(dict.fromkeys((NWS_PROBE, *_csv("PROBE_URLS", cls.probe_urls)))),
+            probe_urls=_csv("PROBE_URLS", cls.probe_urls),
             probe_interval=_number("PROBE_INTERVAL", cls.probe_interval),
             probe_timeout=_number("PROBE_TIMEOUT", cls.probe_timeout),
             offline_after_failures=int(
@@ -169,11 +150,6 @@ class Settings:
             ollama_model=os.getenv("OLLAMA_MODEL", cls.ollama_model),
             ollama_timeout=_number("OLLAMA_TIMEOUT", cls.ollama_timeout),
             alert_cloud_stages=_csv("ALERT_CLOUD_STAGES", cls.alert_cloud_stages),
-            alert_cloud_timeout=_number("ALERT_CLOUD_TIMEOUT", cls.alert_cloud_timeout),
-            noaa_enabled=_flag("NOAA_ENABLED", cls.noaa_enabled),
-            watchlist_max=int(_number("WATCHLIST_MAX", cls.watchlist_max)),
-            noaa_poll_interval=_number("NOAA_POLL_INTERVAL", cls.noaa_poll_interval),
-            noaa_user_agent=os.getenv("NOAA_USER_AGENT", cls.noaa_user_agent),
             worker_count=max(1, int(_number("WORKER_COUNT", cls.worker_count, int))),
             max_attempts=max(1, int(_number("MAX_ATTEMPTS", cls.max_attempts, int))),
             job_timeout=_number("JOB_TIMEOUT", cls.job_timeout),

@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 
 from .agents.cloud import CloudDrafter
 from .agents.pipeline import AlertPipeline
 from .config import Settings
 from .core.connectivity import ConnectivityMonitor
 from .core.db import JobStore
-from .core.noaa import NoaaFeed
 from .core.processors.local import build_local_processor
 from .core.processors.swarm import SwarmProcessor
 from .core.router import SmartRouter
@@ -50,8 +48,6 @@ class AppContext:
             swarm=self.swarm,
             monitor=self.monitor,
             stages=settings.alert_cloud_stages,
-            timeout=settings.alert_cloud_timeout,
-            cooldown=settings.breaker_cooldown,
         )
         self.alert_pipeline = AlertPipeline(cloud=self.drafter)
         self.local = build_local_processor(
@@ -84,17 +80,6 @@ class AppContext:
             batch=settings.sync_batch,
             request_timeout=settings.swarm_timeout,
         )
-        self.noaa = None
-        if settings.noaa_enabled:
-            self.noaa = NoaaFeed(
-                store=self.store,
-                monitor=self.monitor,
-                wake=self.workers.wake,
-                state_path=Path(settings.db_path).parent / "noaa_state.json",
-                user_agent=settings.noaa_user_agent,
-                interval=settings.noaa_poll_interval,
-                max_cities=settings.watchlist_max,
-            )
         self.started = False
 
     # ------------------------------------------------------------------ lifecycle
@@ -119,13 +104,9 @@ class AppContext:
         await self.monitor.start()
         await self.workers.start()
         await self.syncer.start()
-        if self.noaa is not None:
-            await self.noaa.start()
         logger.info("context started (local engine: %s)", self.local.name)
 
     async def stop(self) -> None:
-        if self.noaa is not None:
-            await self.noaa.stop()
         await self.syncer.stop()
         await self.workers.stop()
         await self.monitor.stop()
